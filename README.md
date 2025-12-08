@@ -46,11 +46,47 @@ OPENAI_API_KEY=你的實際API金鑰
 python qa_tool.py
 ```
 
+### 5. 運行 QA Agent（推薦）
+```bash
+python qa_agent.py
+```
+
+這會啟動互動式 QA Agent，自動整合網路搜尋和 LLM 回答！
+
 ---
 
 ## 💻 使用方式
 
-### 方法 A：Open WebUI 整合（推薦）
+### 方法 A：命令列 QA Agent（主要 Demo 方式）⭐
+
+#### 直接運行 Agent
+```bash
+python qa_agent.py
+```
+
+#### 使用方式
+- **預設行為**：輸入問題 → 自動搜尋網路 → LLM 分析回答
+- **直接對話**：輸入 `chat: 你的訊息` → 不搜尋，直接問 LLM
+- **離開**：輸入 `quit` 或 `exit`
+
+#### 範例對話
+```
+You: 台灣的首都是哪裡
+🔍 Searching web...
+✅ Found 3 results
+🤖 Querying LLM...
+Agent: 台灣的首都是台北市...
+
+You: chat: 你好
+Agent: 你好！有什麼我可以幫助你的嗎？
+
+You: quit
+👋 Goodbye!
+```
+
+---
+
+### 方法 B：Open WebUI 整合（額外展示）
 
 #### 1. 安裝 Open WebUI
 ```bash
@@ -89,7 +125,8 @@ LLM 會自動呼叫 QA Tool 搜尋網路並回答！
 .
 ├── .env.example          # API 配置範本
 ├── .gitignore            # Git 忽略規則
-├── qa_tool.py            # QA 工具（網路搜尋功能）
+├── qa_tool.py            # 搜尋工具模組（純函數）
+├── qa_agent.py           # 主 Agent（整合 Tool + LLM）⭐
 ├── start_openwebui.py    # Open WebUI 啟動腳本
 ├── requirements.txt      # Python 依賴套件
 └── README.md             # 本說明文件
@@ -97,10 +134,16 @@ LLM 會自動呼叫 QA Tool 搜尋網路並回答！
 
 ### 檔案說明
 
-- **`qa_tool.py`** - 核心 QA 工具
-  - `web_search_qa()` - 一般網路搜尋
-  - `wikipedia_search()` - 維基百科搜尋
-  - `get_current_info()` - 最新資訊查詢
+- **`qa_tool.py`** - 搜尋工具模組（可重用）
+  - `web_search()` - 純搜尋函數
+  - `format_search_results()` - 格式化結果
+  - `Tools` class - Open WebUI 兼容包裝
+
+- **`qa_agent.py`** - 主 QA Agent ⭐
+  - 整合搜尋工具 + LLM API
+  - 完整的問答流程
+  - 互動式命令列介面
+  - **這是主要的 Demo 程式**
 
 - **`start_openwebui.py`** - Open WebUI 配置啟動腳本
   - 自動設置環境變數
@@ -112,37 +155,67 @@ LLM 會自動呼叫 QA Tool 搜尋網路並回答！
 
 ---
 
-## 🛠️ 可用的工具函數
+## 🛠️ API 使用範例
 
-### 1. web_search_qa(query, max_results=5)
-一般網路搜尋，回傳格式化的搜尋結果。
-
-**範例**：
+### 使用純工具函數
 ```python
-from qa_tool import Tools
+from qa_tool import web_search, format_search_results
 
-tools = Tools()
-result = tools.web_search_qa("台灣的首都")
-print(result)
+# 搜尋網路
+results = web_search("台灣的首都", max_results=3)
+
+# 格式化結果
+formatted = format_search_results(results)
+print(formatted)
 ```
 
-### 2. wikipedia_search(query, max_results=3)
-專門搜尋維基百科內容。
-
-**範例**：
+### 使用 QA Agent
 ```python
-result = tools.wikipedia_search("Machine Learning")
-print(result)
+from qa_agent import QAAgent
+
+# 初始化 Agent
+agent = QAAgent()
+
+# 搜尋並回答
+result = agent.search_and_answer("台灣的首都是哪裡？")
+print(result['answer'])
+
+# 直接對話（不搜尋）
+answer = agent.chat("你好", use_search=False)
+print(answer)
 ```
 
-### 3. get_current_info(query)
-查詢最新資訊（2025 年新聞）。
-
-**範例**：
+### 在其他專案中重用
 ```python
-result = tools.get_current_info("Taiwan president")
-print(result)
+# 其他專案可以 import 這些工具
+from qa_tool import web_search
+
+# 只使用搜尋功能
+results = web_search("Python tutorial")
 ```
+
+---
+
+## 🏗️ 架構設計
+
+### 模組化架構
+```
+用戶輸入
+   ↓
+qa_agent.py (主控 Agent)
+   ↓
+   ├─→ qa_tool.py (搜尋工具)
+   │      └─→ DuckDuckGo API
+   ↓
+   └─→ LLM API (gpt-oss:20b)
+   ↓
+返回答案
+```
+
+### 設計優點
+1. **模組分離**：工具和 Agent 分開，易於測試和擴展
+2. **可重用性**：`qa_tool.py` 可以被其他專案 import
+3. **易於擴展**：未來可以輕鬆添加新工具
 
 ---
 
@@ -181,14 +254,35 @@ print(result)
 
 ## 🎯 未來擴展
 
-可以輕鬆添加更多工具：
+模組化設計讓擴展變得簡單：
 
-- 📊 **數據視覺化** - 生成圖表
+### 添加新工具範例
+```python
+# calculator_tool.py
+def calculate(expression: str) -> float:
+    """計算數學表達式"""
+    return eval(expression)
+
+# 在 qa_agent.py 中整合
+from qa_tool import web_search
+from calculator_tool import calculate
+
+class QAAgent:
+    def process(self, query):
+        if "計算" in query:
+            return calculate(query)
+        elif "搜尋" in query:
+            return web_search(query)
+```
+
+### 可以添加的工具
+- 📊 **數據視覺化** - matplotlib 繪圖
 - 🧮 **計算器** - 數學運算
-- 📄 **文件處理** - RAG 系統
-- 💾 **記憶系統** - 儲存對話歷史
+- 📄 **文件讀取** - RAG 系統
+- 💾 **記憶系統** - 對話歷史儲存
+- 🌐 **API 整合** - 天氣、股票等
 
-只需要創建新的工具模組，並在 Open WebUI 中啟用即可！
+只需要創建新的工具模組，然後在 `qa_agent.py` 中 import 即可！
 
 ---
 

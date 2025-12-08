@@ -1,69 +1,111 @@
 """
-QA Tool for Open WebUI - Web Search and Question Answering
-This tool enables the LLM to search the web and retrieve relevant information.
+QA Tool - Web Search Functions
+Pure utility functions for web searching and information retrieval.
+Can be used standalone or imported by other modules.
 """
 
 from ddgs import DDGS
-from typing import Optional
+from typing import Optional, List, Dict
 import json
 
 
+def web_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
+    """
+    Search the web using DuckDuckGo.
+    
+    :param query: The search query
+    :param max_results: Maximum number of results to return
+    :return: List of search result dictionaries with 'title', 'body', and 'href'
+    """
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+        return results if results else []
+    except Exception as e:
+        print(f"❌ Search error: {e}")
+        return []
+
+
+def format_search_results(results: List[Dict[str, str]]) -> str:
+    """
+    Format search results into a readable string.
+    
+    :param results: List of search result dictionaries
+    :return: Formatted string with numbered results
+    """
+    if not results:
+        return "⚠️ No search results found."
+    
+    formatted = "📊 Search Results:\n\n"
+    
+    for idx, result in enumerate(results, 1):
+        title = result.get('title', 'No title')
+        snippet = result.get('body', 'No description')
+        url = result.get('href', 'No URL')
+        
+        formatted += f"[{idx}] {title}\n"
+        formatted += f"    {snippet}\n"
+        formatted += f"    🔗 {url}\n\n"
+    
+    return formatted
+
+
+# For backward compatibility with Open WebUI
 class Tools:
     """
-    Open WebUI Tool class for web search QA functionality.
+    Open WebUI compatible wrapper class.
+    Wraps the pure functions for use in Open WebUI.
     """
     
     def __init__(self):
-        """Initialize the QA Tool"""
+        """Initialize the Tools wrapper"""
         self.max_results = 5
-        
+    
     def web_search_qa(
         self, 
         query: str,
         max_results: Optional[int] = 5
     ) -> str:
         """
-        Search the web for information related to the user's question.
-        This tool uses DuckDuckGo to find relevant web pages and extracts key information.
+        Search the web for information (Open WebUI compatible).
         
         :param query: The search query or question from the user
-        :param max_results: Maximum number of search results to return (default: 5)
-        :return: Formatted search results with titles, snippets, and URLs
+        :param max_results: Maximum number of search results to return
+        :return: Formatted search results
         """
-        
-        try:
-            # Perform web search using DuckDuckGo
-            print(f"🔍 Searching for: {query}")
-            
-            with DDGS() as ddgs:
-                results = list(ddgs.text(
-                    query,
-                    max_results=max_results
-                ))
-            
-            if not results:
-                return f"⚠️ No search results found for: {query}"
-            
-            # Format search results
-            formatted_results = self._format_search_results(results)
-            
-            return formatted_results
-            
-        except Exception as e:
-            error_msg = f"❌ Search error: {str(e)}"
-            print(error_msg)
-            return error_msg
+        results = web_search(query, max_results)
+        return format_search_results(results)
     
-    def _format_search_results(self, results: list) -> str:
+    def wikipedia_search(
+        self, 
+        query: str,
+        max_results: Optional[int] = 3
+    ) -> str:
         """
-        Format search results into a readable string.
+        Search Wikipedia for information (Open WebUI compatible).
         
-        :param results: List of search result dictionaries
-        :return: Formatted string with search results
+        :param query: The search query
+        :param max_results: Maximum number of results
+        :return: Wikipedia search results
         """
+        wiki_query = f"{query} site:wikipedia.org"
+        results = web_search(wiki_query, max_results)
+        return format_search_results(results)
+    
+    def get_current_info(self, query: str) -> str:
+        """
+        Get current/latest information (Open WebUI compatible).
         
-        formatted = "📊 Web Search Results:\n\n"
+        :param query: The query about current information
+        :return: Latest search results
+        """
+        current_query = f"{query} latest news 2025"
+        results = web_search(current_query, max_results=5)
         
+        if not results:
+            return f"⚠️ No current information found for: {query}"
+        
+        formatted = "🆕 Latest Information:\n\n"
         for idx, result in enumerate(results, 1):
             title = result.get('title', 'No title')
             snippet = result.get('body', 'No description')
@@ -73,122 +115,35 @@ class Tools:
             formatted += f"    {snippet}\n"
             formatted += f"    🔗 {url}\n\n"
         
-        formatted += "\n💡 Please use the above information to answer the user's question."
-        
+        formatted += "\n💡 This is the most recent information available."
         return formatted
-    
-    def wikipedia_search(
-        self, 
-        query: str,
-        max_results: Optional[int] = 3
-    ) -> str:
-        """
-        Search Wikipedia for information.
-        
-        :param query: The search query
-        :param max_results: Maximum number of results (default: 3)
-        :return: Wikipedia search results
-        """
-        
-        try:
-            # Add "wikipedia" to the query for better results
-            wiki_query = f"{query} site:wikipedia.org"
-            
-            print(f"📚 Searching Wikipedia for: {query}")
-            
-            with DDGS() as ddgs:
-                results = list(ddgs.text(
-                    wiki_query,
-                    max_results=max_results
-                ))
-            
-            if not results:
-                return f"⚠️ No Wikipedia results found for: {query}"
-            
-            formatted_results = self._format_search_results(results)
-            
-            return formatted_results
-            
-        except Exception as e:
-            error_msg = f"❌ Wikipedia search error: {str(e)}"
-            print(error_msg)
-            return error_msg
-    
-    def get_current_info(self, query: str) -> str:
-        """
-        Get current/latest information about a topic.
-        Useful for news, current events, or time-sensitive queries.
-        
-        :param query: The query about current information
-        :return: Latest search results
-        """
-        
-        try:
-            # Add time-related keywords to get recent results
-            current_query = f"{query} latest news 2025"
-            
-            print(f"📰 Searching for current info: {query}")
-            
-            with DDGS() as ddgs:
-                results = list(ddgs.text(
-                    current_query,
-                    max_results=5
-                ))
-            
-            if not results:
-                return f"⚠️ No current information found for: {query}"
-            
-            formatted_results = "🆕 Latest Information:\n\n"
-            
-            for idx, result in enumerate(results, 1):
-                title = result.get('title', 'No title')
-                snippet = result.get('body', 'No description')
-                url = result.get('href', 'No URL')
-                
-                formatted_results += f"[{idx}] {title}\n"
-                formatted_results += f"    {snippet}\n"
-                formatted_results += f"    🔗 {url}\n\n"
-            
-            formatted_results += "\n💡 This is the most recent information available."
-            
-            return formatted_results
-            
-        except Exception as e:
-            error_msg = f"❌ Error getting current info: {str(e)}"
-            print(error_msg)
-            return error_msg
 
 
-# Test function for standalone usage
-def test_qa_tool():
-    """Test the QA Tool functionality"""
+# Standalone testing
+def test_search_functions():
+    """Test the pure search functions"""
     
     print("=" * 60)
-    print("Testing QA Tool")
+    print("Testing QA Tool - Pure Functions")
     print("=" * 60)
-    
-    tools = Tools()
     
     # Test 1: Basic web search
-    print("\n🧪 Test 1: Basic Web Search")
-    result1 = tools.web_search_qa("What is the capital of Taiwan?")
-    print(result1)
+    print("\n🧪 Test 1: web_search()")
+    results = web_search("What is the capital of Taiwan?", max_results=3)
+    print(f"Found {len(results)} results")
+    formatted = format_search_results(results)
+    print(formatted[:200] + "...")
     
     # Test 2: Wikipedia search
-    print("\n🧪 Test 2: Wikipedia Search")
-    result2 = tools.wikipedia_search("Machine Learning")
-    print(result2)
-    
-    # Test 3: Current information
-    print("\n🧪 Test 3: Current Information")
-    result3 = tools.get_current_info("Taiwan president 2025")
-    print(result3)
+    print("\n🧪 Test 2: Wikipedia search")
+    wiki_results = web_search("Machine Learning site:wikipedia.org", max_results=2)
+    print(f"Found {len(wiki_results)} Wikipedia results")
     
     print("\n" + "=" * 60)
-    print("✅ All tests completed!")
+    print("✅ Pure function tests completed!")
     print("=" * 60)
 
 
 if __name__ == "__main__":
     # Run tests if executed directly
-    test_qa_tool()
+    test_search_functions()
