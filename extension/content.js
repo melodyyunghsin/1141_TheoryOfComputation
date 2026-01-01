@@ -181,6 +181,22 @@ function extractPageText() {
   const date = extractPublishDate();
   const content = extractMainContent();
   
+  // 標準化日期格式（如果有的話）
+  let publishDate = null;
+  if (date) {
+    try {
+      // 嘗試解析日期並轉換為 ISO 格式
+      const parsedDate = new Date(date);
+      if (!isNaN(parsedDate.getTime())) {
+        publishDate = parsedDate.toISOString().split('T')[0]; // YYYY-MM-DD
+      } else {
+        publishDate = date; // 保留原始格式
+      }
+    } catch (e) {
+      publishDate = date; // 解析失敗，保留原始格式
+    }
+  }
+  
   // 偵測頁面語言
   const htmlLang = document.documentElement.lang || "";
   let detectedLanguage = "en"; // 預設英文
@@ -218,7 +234,8 @@ function extractPageText() {
   
   return {
     text: structuredText.trim(),
-    language: detectedLanguage
+    language: detectedLanguage,
+    publishDate: publishDate  // 新增：標準化的發布日期
   };
 }
 

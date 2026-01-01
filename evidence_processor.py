@@ -4,6 +4,13 @@ Evidence Processor
 """
 from llm_helpers import call_llm, parse_json_response
 from qa_tool import web_search
+from temporal_checker import (
+    extract_time_from_claim,
+    extract_time_from_evidence,
+    normalize_time_expression,
+    is_temporally_relevant
+)
+from datetime import datetime
 
 
 def generate_search_query(claim):
@@ -27,7 +34,10 @@ def generate_search_query(claim):
         "- Specific events or policies\n"
         "- Dates or time periods\n"
         "- Core factual assertions\n\n"
-        "MUST include location keywords if present (e.g., 台北, 台灣, Beijing, Taiwan)\n"
+        "CRITICAL for location keywords:\n"
+        "- Keep COMPLETE place names with country/region prefix (e.g., '日本東北' not just '東北', 'Taiwan Taipei' not just 'Taipei')\n"
+        "- NEVER drop the country/region name before a location\n"
+        "- Examples: '日本岩手縣' ✓, '岩手縣' ✗ | 'Japan Iwate' ✓, 'Iwate' ✗\n\n"
         "Remove: opinions, adjectives, unnecessary words.\n"
         "Return as a simple search query string (not JSON)."
     )
@@ -117,25 +127,47 @@ def analyze_evidence_stance(claim, evidence_title, evidence_body):
         return "irrelevant"
 
 
-def verify_claim(claim, language="zh-TW"):
+def verify_claim(claim, language="zh-TW", temporal_check=True, claim_reference_date=None):
     """
     驗證單個主張
     
     Args:
         claim: 待驗證的主張
         language: 回應語言
+        temporal_check: 是否進行時間相關性檢查（預設開啟）
+        claim_reference_date: claim 的發布日期（用於時間檢查），None 則使用今天
     
     Returns:
         {
-            "verdict": "Supported" | "Contradicted" | "Insufficient evidence",
+            "verdict": "Supported" | "Contradicted" | "Insufficient evidence" | "Temporal mismatch",
             "explanation": str,
             "evidence_count": int,
             "search_query": str,
-            "evidence_breakdown": {"support": int, "refute": int, "irrelevant": int}
+            "evidence_breakdown": {"support": int, "refute": int, "irrelevant": int},
+            "temporal_warning": str (optional)
         }
     """
     # 初始化預設值，避免變數未定義
     search_query = claim
+    valid_results = []
+    
+    # 提取 claim 中的時間資訊（如果啟用時間檢查）
+    claim_time_expression = None
+    claim_time_info = None
+    temporal_warnings = []
+    
+    if temporal_check:
+        try:
+            claim_time_expression = extract_time_from_claim(claim)
+            if claim_time_expression:
+                print(f"  → 發現時間描述: {claim_time_expression}")
+                # 使用 claim 的發布日期作為參考點
+                ref_date = claim_reference_date or datetime.now().isoformat()
+                claim_time_info = normalize_time_expression(claim_time_expression, ref_date)
+                print(f"  → 標準化時間: {claim_time_info.get('parsed_date')} ({claim_time_info.get('time_type')})")
+        except Exception as e:
+            print(f"  Warning: Time extraction failed ({e})")
+
     valid_results = []
     
     try:
@@ -190,7 +222,57 @@ def verify_claim(claim, language="zh-TW"):
     if filtered_out > 0:
         print(f"     Pre-filtered {filtered_out} obviously irrelevant sources")
     
-    # 如果過濾後沒有結果，返回證據不足
+    # 時間相關性過濾（如果啟用）
+    if temporal_check and claim_time_info and claim_time_info.get('time_type') != 'no_time_reference':
+        temporally_filtered = []
+        temporal_filtered_out = 0
+        
+        for r in filtered_results:
+            # 從證據中提取時間表達式和發布日期
+            evidence_time_data = extract_time_from_evidence(r.get('body', ''))
+            evidence_time_expr = evidence_time_data.get('time_expression')
+            evidence_pub_date = evidence_time_data.get('publish_date')
+            
+            if evidence_time_expr:
+                # 決定參考點：優先使用證據的發布日期，否則使用今天
+                if evidence_pub_date:
+                    try:
+                        # 嘗試標準化證據發布日期
+                        normalized_pub_date = normalize_time_expression(evidence_pub_date, datetime.now().isoformat())
+                        reference_date = normalized_pub_date.get('parsed_date', datetime.now().isoformat())
+                        print(f"     使用證據發布日期作為參考: {reference_date}")
+                    except:
+                        reference_date = datetime.now().isoformat()
+                        print(f"     證據發布日期標準化失敗，使用今天作為參考")
+                else:
+                    reference_date = datetime.now().isoformat()
+                
+                # 標準化證據時間（使用證據發布日期或今天作為參考點）
+                evidence_time_info = normalize_time_expression(evidence_time_expr, reference_date)
+                
+                # 檢查時間相關性（僅標記，不過濾）
+                temporal_result = is_temporally_relevant(claim_time_info, evidence_time_info)
+                
+                r['temporal_status'] = temporal_result['status']
+                r['temporal_info'] = temporal_result
+                
+                # 保留所有證據，只標記時間狀態
+                temporally_filtered.append(r)
+                
+                if not temporal_result['is_relevant']:
+                    temporal_warnings.append(
+                        f"⚠️ 證據 '{r.get('title', '')[:50]}...' 的時間 ({temporal_result['evidence_date']}) "
+                        f"不符合 claim 的時間範圍 ({temporal_result['expected_range']})，但仍保留供分析"
+                    )
+            else:
+                # 無法提取時間的證據保留
+                r['temporal_status'] = 'no_constraint'
+                temporally_filtered.append(r)
+        
+        # 移除 temporal_filtered_out 相關邏輯（不再過濾證據）
+        filtered_results = temporally_filtered
+    
+    # === Step 5: 分析每個證據 ===    # 如果過濾後沒有結果，返回證據不足
     if len(filtered_results) == 0:
         return {
             "verdict": "Insufficient evidence",
@@ -211,11 +293,17 @@ def verify_claim(claim, language="zh-TW"):
         body = r.get('body', '')
         stance = analyze_evidence_stance(claim, title, body)
         
-        categorized_evidence[stance].append({
+        evidence_item = {
             "title": title,
             "snippet": body[:200] + "..." if len(body) > 200 else body,
             "href": r.get('href', '')
-        })
+        }
+        
+        # 加入時間資訊（如果有）
+        if 'temporal_info' in r:
+            evidence_item['temporal_info'] = r['temporal_info']
+        
+        categorized_evidence[stance].append(evidence_item)
     
     support_count = len(categorized_evidence["support"])
     refute_count = len(categorized_evidence["refute"])
@@ -286,6 +374,11 @@ def verify_claim(claim, language="zh-TW"):
         }
         if evidence_warning:
             result['explanation'] = evidence_warning + "\n\n" + result['explanation']
+        
+        # 加入時間警告（如果有）
+        if temporal_warnings:
+            result['temporal_warning'] = temporal_warnings[0]  # 只顯示第一個警告
+        
         return result
     except Exception as e:
         return {

@@ -5,7 +5,7 @@ Claim and Detail Extractors
 from llm_helpers import call_llm, parse_json_response
 
 
-def extract_title_and_details(text, language="zh-TW"):
+def extract_title_and_details(text, language="zh-TW", extract_time=False):
     """
     從新聞文本中提取標題和需要驗證的關鍵細節
     Title = 主要主張
@@ -14,6 +14,7 @@ def extract_title_and_details(text, language="zh-TW"):
     Args:
         text: 新聞文章全文（包含 Title: 和 Content: 標記）
         language: 輸出語言（zh-TW, en, auto）
+        extract_time: 已棄用，保留以相容舊程式碼
     
     Returns:
         {"title": str, "details": [str, ...]}
@@ -37,11 +38,13 @@ def extract_title_and_details(text, language="zh-TW"):
         "2. Details must be EXACT quotes or paraphrases from the CONTENT section\n"
         "3. If title claims '3000 police deployed' → find WHERE in content it mentions specific numbers\n"
         "4. DO NOT infer, guess, or add details not explicitly stated in the text\n"
-        "5. DO NOT extract peripheral details that don't directly prove the title's main claim\n\n"
+        "5. DO NOT extract peripheral details that don't directly prove the title's main claim\n"
+        "6. DO NOT extract time/date information alone - combine it with factual content\n\n"
         "Details should be:\n"
         "- Specific numbers FOUND IN THE TEXT (e.g., '1300 police', '2900 MRT staff')\n"
         "- Key events MENTIONED IN THE TEXT that directly relate to the title\n"
-        "- Evidence FROM THE TEXT that confirms or refutes the title's core assertion\n\n"
+        "- Evidence FROM THE TEXT that confirms or refutes the title's core assertion\n"
+        "- If extracting time-related info, combine it with the event (e.g., 'Earthquake occurred at 11:27 PM on Dec 31' not just 'Dec 31, 11:27 PM')\n\n"
         "Extract 2-4 key details (quality over quantity).\n"
         "Ignore: peripheral details, opinions, vague statements, minor supporting facts.\n\n"
         "IMPORTANT: If the content doesn't contain enough specific details to support the title, return fewer details or empty array.\n"

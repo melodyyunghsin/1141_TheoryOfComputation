@@ -35,7 +35,8 @@ document.getElementById("analyzePage").onclick = async () => {
             language = response.language || "en";
           }
           
-          await verifyText(response.text, language);
+          // 傳遞文本和發布日期
+          await verifyText(response.text, language, response.publishDate);
         }
       );
     }
@@ -62,12 +63,19 @@ document.getElementById("verifyManual").onclick = async () => {
 };
 
 // ---- Send text to local agent server ----
-async function verifyText(text, language = "zh-TW") {
+async function verifyText(text, language = "zh-TW", publishDate = null) {
   try {
+    const payload = { text, language };
+    
+    // 如果有發布日期，加入 payload
+    if (publishDate) {
+      payload.publishDate = publishDate;
+    }
+    
     const res = await fetch("http://127.0.0.1:5000/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, language })
+      body: JSON.stringify(payload)
     });
 
     if (!res.ok) {

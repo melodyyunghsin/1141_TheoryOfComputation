@@ -96,9 +96,14 @@ class FakeNewsAgent:
             else:
                 overall_credibility = "UNCERTAIN"
             
+            # 確保 explanation 是字串
+            explanation = result.get("explanation", "")
+            if not isinstance(explanation, str):
+                explanation = str(explanation) if explanation else ""
+            
             return {
                 "overall_credibility": overall_credibility,
-                "explanation": result.get("explanation", ""),
+                "explanation": explanation,
                 "detail_summary": detail_counts
             }
         except Exception as e:
@@ -139,13 +144,15 @@ class FakeNewsAgent:
 
         return credibility, counts
     
-    def run(self, text, language="zh-TW"):
+    def run(self, text, language="zh-TW", temporal_check=True, publish_date=None):
         """
         主流程：自動偵測輸入類型並執行驗證
         
         Args:
             text: 輸入文本（新聞文章或一般陳述）
             language: 回應語言（zh-TW, en, auto）
+            temporal_check: 是否進行時間相關性檢查（預設開啟）
+            publish_date: 新聞發布日期（用於計算相對時間，如"去年"）
         
         Returns:
             驗證結果字典（格式取決於模式）
@@ -156,28 +163,48 @@ class FakeNewsAgent:
         if is_news_article:
             # === 模式 A: 新聞文章驗證（三層架構）===
             print("[MODE] News Article Verification (Title→Details→Evidence)\n")
+            
+            if publish_date:
+                print(f"News publish date: {publish_date}")
+            
             print("Step 1: Extract title and verifiable details...")
-            extraction = extract_title_and_details(text, language=language)
+            extraction = extract_title_and_details(text, language=language, extract_time=False)
             title = extraction["title"]
             details = extraction["details"]
             
             print(f"Title: {title}")
-            print(f"Found {len(details)} verifiable details\n")
+            print(f"Found {len(details)} verifiable details")
+            print()
 
             # Step 2: Verify each detail
             detail_results = []
+            temporal_warnings = []
+            
             for i, detail in enumerate(details, 1):
                 print(f"Step 2.{i}: Verify detail {i}/{len(details)}")
                 print(f"  Detail: {detail[:80]}...")
-                verification = verify_claim(detail, language=language)
-                detail_results.append({
+                verification = verify_claim(
+                    detail, 
+                    language=language,
+                    temporal_check=temporal_check,
+                    claim_reference_date=publish_date  # 使用新聞發布日期作為參考點
+                )
+                
+                detail_result = {
                     "detail": detail,
                     "verdict": verification["verdict"],
                     "explanation": verification["explanation"],
                     "evidence_count": verification.get("evidence_count", 0),
                     "search_query": verification.get("search_query", ""),
                     "evidence_breakdown": verification.get("evidence_breakdown", {})
-                })
+                }
+                
+                # 收集時間警告
+                if "temporal_warning" in verification:
+                    detail_result["temporal_warning"] = verification["temporal_warning"]
+                    temporal_warnings.append(f"Detail {i}: {verification['temporal_warning']}")
+                
+                detail_results.append(detail_result)
                 print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} sources)\n")
 
             # Step 3: Aggregate to judge title
@@ -187,7 +214,7 @@ class FakeNewsAgent:
             print(f"  Title credibility: {title_verdict['overall_credibility']}")
             print(f"  Detail statistics: {title_verdict['detail_summary']}\n")
             
-            return {
+            result = {
                 "mode": "news_article",
                 "title": title,
                 "title_verdict": title_verdict["overall_credibility"],
@@ -195,6 +222,13 @@ class FakeNewsAgent:
                 "detail_summary": title_verdict["detail_summary"],
                 "details": detail_results
             }
+            
+            # 加入時間警告（如果有）
+            if temporal_warnings:
+                result["temporal_warnings"] = temporal_warnings
+                print(f"⚠️ 時間異常警告: {len(temporal_warnings)} 個細節有時間不符問題\n")
+            
+            return result
         
         else:
             # === 模式 B: 一般文字驗證（claim-based）===
@@ -205,18 +239,33 @@ class FakeNewsAgent:
 
             # Step 2: Verify each claim
             results = []
+            temporal_warnings = []
+            
             for i, claim in enumerate(claims, 1):
                 print(f"Step 2: Verify claim {i}/{len(claims)}")
                 print(f"  Claim: {claim[:80]}...")
-                verification = verify_claim(claim, language=language)
-                results.append({
+                verification = verify_claim(
+                    claim, 
+                    language=language,
+                    temporal_check=temporal_check,
+                    claim_reference_date=publish_date  # 使用發布日期（一般文字可能沒有）
+                )
+                
+                result_item = {
                     "claim": claim,
                     "verdict": verification["verdict"],
                     "explanation": verification["explanation"],
                     "evidence_count": verification.get("evidence_count", 0),
                     "search_query": verification.get("search_query", ""),
                     "evidence_breakdown": verification.get("evidence_breakdown", {})
-                })
+                }
+                
+                # 收集時間警告
+                if "temporal_warning" in verification:
+                    result_item["temporal_warning"] = verification["temporal_warning"]
+                    temporal_warnings.append(f"Claim {i}: {verification['temporal_warning']}")
+                
+                results.append(result_item)
                 print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} sources)\n")
 
             # Step 3: Aggregate results
@@ -231,12 +280,19 @@ class FakeNewsAgent:
                 f"Insufficient evidence: {counts['Insufficient evidence']}"
             )
 
-            return {
+            result = {
                 "mode": "plain_text",
                 "overall_credibility": credibility,
                 "summary": summary,
                 "claims": results
             }
+            
+            # 加入時間警告（如果有）
+            if temporal_warnings:
+                result["temporal_warnings"] = temporal_warnings
+                print(f"⚠️ 時間異常警告: {len(temporal_warnings)} 個 claim 有時間不符問題\n")
+            
+            return result
 
 
 # ---------- For testing in terminal ----------

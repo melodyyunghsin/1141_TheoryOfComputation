@@ -10,6 +10,7 @@
 - ✅ **智能提取**：從新聞中提取標題和關鍵細節
 - ✅ **網路搜尋驗證**：自動搜尋外部證據
 - ✅ **證據立場分析**：判斷證據支持/反駁/無關
+- ✅ **時間相關性檢查**：防止「舊聞當新聞」的假新聞手法
 - ✅ **多語言支援**：繁體中文、英文、自動偵測
 - ✅ **模組化架構**：易於擴展新功能
 
@@ -156,6 +157,7 @@ Input article or claim:
 ├── llm_helpers.py               # LLM API 和 JSON 解析
 ├── extractors.py                # Title/Details/Claims 提取
 ├── evidence_processor.py        # 證據搜尋、過濾、驗證
+├── temporal_checker.py          # 時間相關性檢查 ⏰
 │
 ├── qa_tool.py                   # 網路搜尋工具
 ├── qa_agent.py                  # QA Agent（舊功能保留）
@@ -170,9 +172,10 @@ Input article or claim:
 
 #### 核心模組
 
-**`fake_news_agent.py`** (189 行) - 主控 Agent ⭐
+**`fake_news_agent.py`** (311 行) - 主控 Agent ⭐
 - 自動模式偵測（新聞 vs 一般文字）
 - 協調三層驗證流程
+- 時間驗證整合（接收新聞發布日期）
 - 彙總並判斷標題可信度
 - CLI 測試介面
 
@@ -181,35 +184,43 @@ Input article or claim:
 - `parse_json_response()` - 清理 markdown 並解析 JSON
 - 處理 API 錯誤和超時
 
-**`extractors.py`** (134 行) - 提取器
-- `extract_title_and_details()` - 從新聞提取標題和關鍵細節
+**`extractors.py`** (154 行) - 提取器
+- `extract_title_and_details()` - 從新聞提取標題和關鍵細節（不提取純時間資訊）
 - `extract_claims()` - 從一般文字提取可驗證主張
 - 強制 LLM 只從文本提取，不編造資訊
 
-**`evidence_processor.py`** (313 行) - 證據處理器
-- `generate_search_query()` - 優化搜尋關鍵字
+**`evidence_processor.py`** (401 行) - 證據處理器
+- `generate_search_query()` - 優化搜尋關鍵字（保留完整地名）
 - `is_evidence_potentially_relevant()` - 預過濾不相關證據
 - `analyze_evidence_stance()` - 判斷證據立場
-- `verify_claim()` - 完整的 claim 驗證流程
+- `verify_claim()` - 完整的 claim 驗證流程（整合時間檢查）
+
+**`temporal_checker.py`** (360 行) - 時間相關性檢查 ⏰
+- `normalize_time_expression()` - LLM-based 時間標準化（支援多語言）
+- `extract_time_from_claim()` - 從 claim 提取時間表達式
+- `extract_time_from_evidence()` - 從證據提取時間表達式和發布日期
+- `calculate_time_range()` - 計算時間範圍（specific_recent/relative_recent/relative_past）
+- `is_temporally_relevant()` - 判斷證據時間是否在 claim 時間範圍內
 
 #### Extension 模組
 
-**`extension/content.js`** - 內容提取
+**`extension/content.js`** (232 行) - 內容提取
 - `extractTitle()` - 提取標題（多種策略）
 - `extractAuthor()` - 提取作者
-- `extractPublishDate()` - 提取發布時間
+- `extractPublishDate()` - 提取發布時間並標準化為 ISO 格式
 - `extractMainContent()` - 提取主要內容（過濾噪音）
 - `isNoiseElement()` - 判斷元素是否為廣告/導航
 
-**`extension/popup.js`** - UI 邏輯
+**`extension/popup.js`** (164 行) - UI 邏輯
 - `getLanguage()` - 讀取語言選擇
-- `verifyText()` - 發送驗證請求到後端
+- `verifyText()` - 發送驗證請求到後端（包含 publishDate）
 - `renderResult()` - 根據模式顯示結果
+- 處理時間警告顯示
 
-**`fake_news_server.py`** - Flask API
+**`fake_news_server.py`** (50 行) - Flask API
 - `/verify` POST - 驗證端點
-- 接收 `{text, language}`
-- 返回驗證結果 JSON
+- 接收 `{text, language, publishDate}`
+- 返回驗證結果 JSON（包含時間警告）
 
 ---
 
@@ -319,7 +330,7 @@ if "台北" in claim and "台北" not in query:
 
 ### 添加新功能範例
 
-#### 1. 來源可信度排序
+#### 1. 來源可信度排序（未實作）
 
 創建 `credibility_ranker.py`：
 ```python
@@ -349,23 +360,6 @@ from credibility_ranker import rank_sources_by_credibility
 categorized_evidence["support"] = rank_sources_by_credibility(
     categorized_evidence["support"]
 )
-```
-
-#### 2. 時間相關性檢查
-
-創建 `temporal_checker.py`：
-```python
-from datetime import datetime
-
-def extract_publish_date(evidence_text):
-    """從證據中提取發布日期"""
-    # 使用正則或 LLM 提取日期
-    ...
-
-def is_temporally_relevant(claim_date, evidence_date, threshold_days=365):
-    """檢查證據是否在時間範圍內"""
-    delta = abs((claim_date - evidence_date).days)
-    return delta <= threshold_days
 ```
 
 ### 測試新模組
@@ -445,8 +439,8 @@ def test_gov_domain_highest_priority():
 - [x] 模組化重構
 - [x] 多語言支援
 - [x] 證據立場分析
+- [x] 時間相關性檢查（防止舊聞當新聞）
 - [ ] 來源可信度排序
-- [ ] 時間相關性檢查
 - [ ] 錯誤處理改進
 
 ### 中期目標
@@ -556,7 +550,16 @@ def test_gov_domain_highest_priority():
 
 ## 📝 更新日誌
 
-### Version 2.0 (2026-01-01) - 重構與擴展
+### Version 2.1 (2026-01-01) - 時間相關性檢查
+- ✨ 新增 temporal_checker.py 模組（360 行）
+- ✨ LLM-based 時間標準化（支援多語言相對時間）
+- ✨ 時間範圍計算與相關性判斷
+- ✨ Extension 提取並傳遞新聞發布日期
+- ✨ 證據時間使用證據自己的發布日期作為參考點
+- 🎯 防止「舊聞當新聞」的假新聞手法
+- ⚙️ 時間檢查預設為標記模式（不過濾證據）
+
+### Version 2.0 (2025-12-30) - 重構與擴展
 - ✨ 模組化重構（4個獨立模組）
 - ✨ 新增 Chrome Extension 支援
 - ✨ 三層驗證架構（Title→Details→Evidence）
@@ -564,7 +567,9 @@ def test_gov_domain_highest_priority():
 - ✨ 證據立場分析（support/refute/irrelevant）
 - 🐛 修復 LLM 回應 markdown 解析問題
 - 🐛 修復預過濾過於嚴格的問題
+- 🐛 修復地名關鍵字保留問題（「日本東北」vs「東北」）
 - 📝 加強 prompt 防止 LLM 編造資訊
+- 📝 防止提取純時間資訊作為 detail
 
 ### Version 1.0 (2025-12) - 初始版本
 - ✅ 基礎 QA Agent 功能

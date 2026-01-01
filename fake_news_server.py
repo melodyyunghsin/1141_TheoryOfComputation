@@ -23,13 +23,14 @@ def verify():
     data = request.get_json(force=True, silent=True) or {}
     text = data.get("text", "")
     language = data.get("language", "zh-TW")  # 預設繁體中文
+    publish_date = data.get("publishDate")  # 新聞發布日期（可選）
     
-    print(f"[POST /verify] language={language}, text_length={len(text)}")
+    print(f"[POST /verify] language={language}, text_length={len(text)}, publishDate={publish_date}")
 
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    result = agent.run(text, language=language)
+    result = agent.run(text, language=language, publish_date=publish_date)
     return jsonify(result)
 
 
