@@ -574,6 +574,10 @@ def test_example():
 
 ## 📝 更新日誌
 
+### Version 3.0 (2026-01-02) - 合併 QA Agent
+- ✨ 整合 QA Agent 與新聞驗證 Agent 至單一系統（多 Agent 架構）
+- ✨ 新增「模式切換」機制（News Verification / Question Answering）
+
 ### Version 2.2 (2026-01-02) - 官方來源優先
 - ✨ 新增兩階段搜尋策略：優先搜尋官方來源
 - ✨ 支援各國政府域名和國際組織（.gov.tw, .go.jp, who.int 等）
