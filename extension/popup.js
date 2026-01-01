@@ -1,10 +1,61 @@
 const output = document.getElementById("output");
+const modeSelect = document.getElementById("modeSelect");
+const newsModeDiv = document.getElementById("newsMode");
+const qaModeDiv = document.getElementById("qaMode");
+
+function updateModeUI() {
+  const mode = getMode();
+
+  if (mode === "qa") {
+    newsModeDiv.classList.add("hidden");
+    qaModeDiv.classList.remove("hidden");
+    output.textContent = "Enter a question to get started.";
+  } else {
+    qaModeDiv.classList.add("hidden");
+    newsModeDiv.classList.remove("hidden");
+    output.textContent = "Select an article or paste text to analyze.";
+  }
+}
+
+// Run once on load
+updateModeUI();
+
+// Listen for mode changes
+modeSelect.addEventListener("change", updateModeUI);
+
+
+// ---- Get selected mode ----
+function getMode() {
+  const select = document.getElementById("modeSelect");
+  return select ? select.value : "news";
+}
+
 
 // ---- Get selected language ----
 function getLanguage() {
   const select = document.getElementById("languageSelect");
   return select.value;
 }
+
+// ---- Ask question ----
+document.getElementById("askQuestion").onclick = async () => {
+  const question = document.getElementById("qaInput").value;
+
+  if (!question.trim()) {
+    output.textContent = "Please enter a question.";
+    return;
+  }
+
+  output.textContent = "Searching and generating answer...";
+
+  let language = getLanguage();
+  if (language === "auto") {
+    language = /[\u4e00-\u9fa5]/.test(question) ? "zh-TW" : "en";
+  }
+
+  await verifyText(question, language);
+};
+
 
 // ---- Analyze current tab ----
 document.getElementById("analyzePage").onclick = async () => {
@@ -26,8 +77,14 @@ document.getElementById("analyzePage").onclick = async () => {
             output.textContent = "Failed to extract page text.";
             return;
           }
-          
-          output.textContent = "Extracting claims...\nSearching for evidence...\nAnalyzing credibility...\n\nThis may take 30-60 seconds...";
+          const mode = getMode();
+          if (mode === "qa") {
+            output.textContent = "Answering question...\nSearching if needed...";
+          } else {
+            output.textContent = "Extracting claims...\nSearching for evidence...\nAnalyzing credibility...";
+          }
+
+          //output.textContent = "Extracting claims...\nSearching for evidence...\nAnalyzing credibility...\n\nThis may take 30-60 seconds...";
           
           // 自動偵測語言
           let language = getLanguage();
@@ -65,7 +122,8 @@ document.getElementById("verifyManual").onclick = async () => {
 // ---- Send text to local agent server ----
 async function verifyText(text, language = "zh-TW", publishDate = null) {
   try {
-    const payload = { text, language };
+    const mode = getMode();
+    const payload = { mode, text, language };
     
     // 如果有發布日期，加入 payload
     if (publishDate) {
@@ -102,13 +160,13 @@ function renderResult(result) {
   if (result.mode === "news_article") {
     // === 新聞文章模式 ===
     let text = `TITLE: ${result.title}\n`;
-    text += "=".repeat(60) + "\n";
+    text += "=".repeat(45) + "\n";
     text += `Title Verdict: ${result.title_verdict}\n\n`;
     text += `Title Explanation:\n${result.title_explanation}\n\n`;
-    text += "=".repeat(60) + "\n\n";
+    text += "=".repeat(45) + "\n\n";
 
     text += "VERIFIABLE DETAILS:\n";
-    text += "-".repeat(60) + "\n\n";
+    text += "-".repeat(45) + "\n\n";
     
     result.details.forEach((d, i) => {
       text += `${i + 1}. ${d.detail}\n`;
@@ -128,7 +186,7 @@ function renderResult(result) {
       text += `      ${explanation.replace(/\n/g, '\n      ')}\n\n`;
     });
 
-    text += "=".repeat(80) + "\n";
+    text += "=".repeat(30) + "\n";
     text += "SUMMARY:\n";
     if (result.detail_summary) {
       for (const [key, value] of Object.entries(result.detail_summary)) {
@@ -138,15 +196,17 @@ function renderResult(result) {
 
     return text;
     
+  } else if (result.mode === "qa") {
+    return `Q: ${result.question}\n\nA: ${result.answer}`;
   } else {
     // === 一般文字模式 (claim-based) ===
     let text = `Overall Credibility: ${result.overall_credibility}\n`;
-    text += "=".repeat(60) + "\n";
+    text += "=".repeat(45) + "\n";
     text += `Summary: ${result.summary}\n\n`;
-    text += "=".repeat(60) + "\n\n";
+    text += "=".repeat(45) + "\n\n";
     
     text += "CLAIMS:\n";
-    text += "-".repeat(60) + "\n\n";
+    text += "-".repeat(45) + "\n\n";
     
     result.claims.forEach((c, i) => {
       text += `${i + 1}. ${c.claim}\n`;

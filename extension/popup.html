@@ -6,29 +6,61 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h3>Fake News Verifier</h3>
+  <h2 class="title">Fake News Verifier</h2>
 
-  <div style="margin-bottom: 10px;">
-    <label for="languageSelect">Language / 語言:</label>
-    <select id="languageSelect">
+  <!-- Language selector (still shared) -->
+  <div class="section">
+    <label class="label">Language / 語言</label>
+    <select id="languageSelect" class="select">
       <option value="auto">Auto-detect / 自動偵測</option>
       <option value="en">English</option>
       <option value="zh-TW">繁體中文</option>
     </select>
   </div>
 
-  <button id="analyzePage">Analyze Current Page</button>
+  <!-- Mode selector -->
+  <div class="section">
+    <label class="label">Mode</label>
+    <select id="modeSelect" class="select">
+      <option value="news">📰 News Verification</option>
+      <option value="qa">🤖 Question Answering</option>
+    </select>
+  </div>
 
-  <p><b>OR</b></p>
+  <!-- ===== NEWS MODE UI ===== -->
+  <div id="newsMode" class="section">
+    <button id="analyzePage" class="btn btn-primary">
+      Analyze Current Page
+    </button>
 
-  <textarea
-    id="manualInput"
-    placeholder="Paste a claim or article here..."
-  ></textarea>
+    <div class="divider">OR</div>
 
-  <button id="verifyManual">Verify Text</button>
+    <textarea
+      id="manualInput"
+      placeholder="Paste a news article or claim here..."
+    ></textarea>
 
-  <pre id="output"></pre>
+    <button id="verifyManual" class="btn">
+      Verify Text
+    </button>
+  </div>
+
+  <!-- ===== QA MODE UI ===== -->
+  <div id="qaMode" class="section hidden">
+    <textarea
+      id="qaInput"
+      placeholder="Ask a question..."
+    ></textarea>
+
+    <button id="askQuestion" class="btn btn-primary">
+      Ask Question
+    </button>
+  </div>
+
+  <!-- Output -->
+  <div class="section output-section">
+    <pre id="output">Results will appear here.</pre>
+  </div>
 
   <script src="popup.js"></script>
 </body>
