@@ -37,6 +37,12 @@ Handle expressions like:
 - Absolute: "2025-05-01", "May 2025"
 - Relative recent: "today", "yesterday", "今天", "昨天", "this week"
 - Relative past: "last year", "去年", "上個月", "last month"
+- Day references with number: "昨(31日)", "31日", "yesterday (31st)" - interpret relative to reference date's month/year
+
+CRITICAL for day number references:
+- If reference date is 2026-01-01 and text says "昨(31日)" or "yesterday 31st", this means 2025-12-31 (previous month)
+- If reference date is 2026-02-01 and text says "昨(31日)", this means 2026-01-31 (previous day)
+- Always consider: is this day number BEFORE the reference date? Then use previous month/year if needed
 
 Return JSON with this exact structure:
 {
@@ -55,6 +61,10 @@ Time type definitions:
     user_prompt = f"""Current reference date: {reference_date.strftime('%Y-%m-%d')}
 
 Parse this time expression: "{time_text}"
+
+IMPORTANT: If the text mentions a day number (like "31日" or "31st") with "yesterday/昨天", calculate which month it belongs to:
+- Reference: 2026-01-01, Text: "昨(31日)" → Result: 2025-12-31 (previous month because Jan 1st - 1 day = Dec 31st)
+- Reference: 2026-02-01, Text: "昨(31日)" → Result: 2026-01-31 (previous day in previous month)
 
 Examples:
 Input: "今天" → {{"parsed_date": "{reference_date.strftime('%Y-%m-%d')}", "confidence": "high", "time_type": "specific_recent", "explanation": "Today relative to reference date"}}
