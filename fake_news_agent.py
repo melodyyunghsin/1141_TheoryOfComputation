@@ -1,189 +1,131 @@
-import os
+"""
+Fake News Verification Agent (Refactored)
+主流程和協調邏輯，委派具體任務給專門模組
+"""
 import json
-import re
-import requests
-from dotenv import load_dotenv
-from qa_tool import web_search
-
-load_dotenv()
-
-API_BASE_URL = os.getenv("API_BASE_URL")
-API_KEY = os.getenv("API_KEY")
-MODEL = "gpt-oss:20b"
+from llm_helpers import call_llm, parse_json_response
+from extractors import extract_title_and_details, extract_claims
+from evidence_processor import verify_claim
 
 
 class FakeNewsAgent:
+    """
+    假新聞驗證代理
+    支援兩種模式：
+    1. 新聞文章驗證（Title → Details → Evidence）
+    2. 一般文字驗證（Claim-based）
+    """
+    
     def __init__(self):
-        if not API_KEY:
-            raise RuntimeError("API_KEY not set")
-        self.headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json",
-        }
-
-    # ---------- LLM helper ----------
-    def call_llm(self, system_prompt, user_prompt):
-        payload = {
-            "model": MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "stream": False,
-        }
-        r = requests.post(
-            f"{API_BASE_URL}/api/chat",
-            headers=self.headers,
-            json=payload,
-            timeout=120,
-        )
-        r.raise_for_status()
-        return r.json()["message"]["content"]
-
-    # ---------- Step 1: Claim extraction ----------
-    def extract_claims(self, text, max_claims=5, language="zh-TW"):
+        """初始化 Agent（驗證 API Key 在 llm_helpers 中處理）"""
+        pass
+    
+    def judge_title_from_details(self, title, detail_results, language="zh-TW"):
+        """
+        基於細節驗證結果判斷標題的可信度
+        
+        Args:
+            title: 新聞標題
+            detail_results: 細節驗證結果列表
+            language: 回應語言
+        
+        Returns:
+            {
+                "overall_credibility": "CREDIBLE" | "MISLEADING" | "UNCERTAIN",
+                "explanation": str,
+                "detail_summary": {"Supported": int, "Contradicted": int, "Insufficient evidence": int}
+            }
+        """
+        # 統計細節驗證結果
+        detail_counts = {"Supported": 0, "Contradicted": 0, "Insufficient evidence": 0}
+        for detail in detail_results:
+            detail_counts[detail["verdict"]] += 1
+        
         # 根據語言設定回應語言
         language_instruction = ""
         if language == "zh-TW":
-            language_instruction = "請用繁體中文提取並表達這些主張。"
+            language_instruction = "CRITICAL: You MUST respond in Traditional Chinese (繁體中文). All explanations must be in Traditional Chinese."
         elif language == "en":
-            language_instruction = "Please extract and express these claims in English."
+            language_instruction = "CRITICAL: You MUST respond in English. All explanations must be in English."
         else:
-            language_instruction = "請用繁體中文提取並表達這些主張。"
+            language_instruction = "CRITICAL: You MUST respond in Traditional Chinese (繁體中文). All explanations must be in Traditional Chinese."
+        
+        # 建立細節摘要給LLM
+        details_summary = ""
+        for i, detail in enumerate(detail_results, 1):
+            details_summary += f"{i}. {detail['detail']}\n"
+            details_summary += f"   Verdict: {detail['verdict']}\n"
+            details_summary += f"   Brief: {detail['explanation'][:100]}...\n\n"
         
         system = (
-            "Extract factual, checkable claims from the text.\n"
-            "Return ONLY a JSON array of strings.\n"
-            "Ignore opinions or emotional language.\n"
-            f"{language_instruction}"
-        )
-        out = self.call_llm(system, text)
-
-        try:
-            claims = json.loads(out)
-            return claims[:max_claims]
-        except Exception:
-            sentences = re.split(r"(?<=[.!?])\s+", text)
-            return sentences[:max_claims]
-
-    # ---------- Step 2a: Generate search query ----------
-    def generate_search_query(self, claim):
-        """從claim中提取最佳搜尋關鍵字"""
-        system = (
-            "Extract the most important keywords for fact-checking this claim.\n"
-            "Return ONLY 2-4 key terms that would help find relevant evidence.\n"
-            "Focus on:\n"
-            "- Names of people, organizations, places\n"
-            "- Specific events or policies\n"
-            "- Dates or time periods\n"
-            "- Core factual assertions\n\n"
-            "Remove: opinions, adjectives, unnecessary words.\n"
-            "Return as a simple search query string (not JSON)."
+            f"{language_instruction}\n\n"
+            "You are judging whether a news article's TITLE is credible based on the verification of specific details from the content.\n\n"
+            f"Title to judge: {title}\n\n"
+            f"Details verification summary:\n"
+            f"- Supported: {detail_counts['Supported']}\n"
+            f"- Contradicted: {detail_counts['Contradicted']}\n"
+            f"- Insufficient evidence: {detail_counts['Insufficient evidence']}\n\n"
+            "Decision logic:\n"
+            "- If most details are SUPPORTED → Title is likely TRUE\n"
+            "- If key details are CONTRADICTED → Title is FALSE or MISLEADING\n"
+            "- If most details lack evidence → Cannot determine title credibility\n\n"
+            "Classify the title as:\n"
+            "- CREDIBLE: Strong evidence supports the title\n"
+            "- MISLEADING: Evidence contradicts or undermines the title\n"
+            "- UNCERTAIN: Insufficient evidence to judge\n\n"
+            "In your explanation:\n"
+            "1. Which details support/contradict the title\n"
+            "2. Overall assessment of title accuracy\n"
+            "3. Any caveats or uncertainties\n\n"
+            "Return JSON with fields: credibility (CREDIBLE/MISLEADING/UNCERTAIN), explanation.\n"
+            "Your entire response must be in the language specified at the top."
         )
         
-        try:
-            query = self.call_llm(system, f"Claim: {claim}")
-            # 清理回應，移除引號和多餘空白
-            query = query.strip().strip('"').strip("'")
-            return query if len(query) > 0 else claim
-        except Exception:
-            # 備用：直接使用claim
-            return claim
-
-    # ---------- Step 2b: Verify one claim ----------
-    def verify_claim(self, claim, language="zh-TW"):
-        # 初始化預設值，避免變數未定義
-        search_query = claim
-        valid_results = []
+        user = f"Details verification:\n{details_summary}"
         
         try:
-            # 先生成更精準的搜尋查詢
-            search_query = self.generate_search_query(claim)
-            print(f"  → 搜尋關鍵字: {search_query}")
-        except Exception as e:
-            print(f"  Warning: Search query generation failed ({e}), using original claim")
-            search_query = claim
-        
-        try:
-            # 搜尋至少10個結果
-            search_results = web_search(search_query, max_results=10)
+            out = call_llm(system, user)
+            result = parse_json_response(out)
             
-            # 過濾有效結果
-            valid_results = [r for r in search_results if r.get('title') and r.get('body')]
+            # 標準化credibility值
+            cred = result.get("credibility", "UNCERTAIN").upper()
+            if "CREDIBLE" in cred and "MISLEADING" not in cred:
+                overall_credibility = "CREDIBLE"
+            elif "MISLEADING" in cred or "FALSE" in cred:
+                overall_credibility = "MISLEADING"
+            else:
+                overall_credibility = "UNCERTAIN"
+            
+            return {
+                "overall_credibility": overall_credibility,
+                "explanation": result.get("explanation", ""),
+                "detail_summary": detail_counts
+            }
         except Exception as e:
-            print(f"  Error: Search failed ({e})")
+            # 備用：簡單規則
+            if detail_counts["Contradicted"] > 0:
+                overall_credibility = "MISLEADING"
+            elif detail_counts["Supported"] > detail_counts["Insufficient evidence"]:
+                overall_credibility = "CREDIBLE"
+            else:
+                overall_credibility = "UNCERTAIN"
+            
             return {
-                "verdict": "Insufficient evidence",
-                "explanation": f"Search error: {str(e)}",
-                "evidence_count": 0,
-                "search_query": search_query
+                "overall_credibility": overall_credibility,
+                "explanation": f"Unable to generate detailed explanation. Based on {detail_counts['Supported']} supported, {detail_counts['Contradicted']} contradicted, {detail_counts['Insufficient evidence']} insufficient evidence.",
+                "detail_summary": detail_counts
             }
-        
-        # 即使少於3個也繼續分析，但會在結果中註明
-        evidence_warning = ""
-        if len(valid_results) < 3:
-            evidence_warning = f"[Warning] Only found {len(valid_results)} evidence source(s). Recommended: at least 3 sources."
-        
-        if len(valid_results) == 0:
-            return {
-                "verdict": "Insufficient evidence",
-                "explanation": "No relevant evidence found. Cannot verify this claim.",
-                "evidence_count": 0,
-                "search_query": search_query
-            }
-
-        # 建立證據列表
-        context = ""
-        for i, r in enumerate(valid_results, 1):
-            context += f"{i}. [{r.get('title','')}]\n   {r.get('body','')}\n\n"
-
-        # 根據語言設定回應語言
-        language_instruction = ""
-        if language == "zh-TW":
-            language_instruction = "請用繁體中文回答。"
-        elif language == "en":
-            language_instruction = "Please respond in English."
-        else:
-            language_instruction = "請用繁體中文回答。"  # 預設
-
-        system = (
-            "You are verifying a factual claim using provided evidence.\n"
-            f"You have {len(valid_results)} sources of evidence.\n"
-            "Analyze ALL provided evidence carefully and comprehensively.\n\n"
-            "Classify the claim as one of:\n"
-            "- Supported: 證據明確支持此主張\n"
-            "- Contradicted: 證據明確反駁此主張\n"
-            "- Insufficient evidence: 證據不足、互相矛盾、或與主張無關\n\n"
-            "In your explanation, include:\n"
-            "1. 有幾個證據支持/反駁/無關\n"
-            "2. 主要發現是什麼\n"
-            "3. 為何做出此判斷\n\n"
-            f"{evidence_warning}\n\n"
-            f"{language_instruction}\n"
-            "Return JSON with fields: verdict, explanation."
-        )
-
-        user = f"Claim to verify:\n{claim}\n\nEvidence from {len(valid_results)} sources:\n{context}"
-
-        out = self.call_llm(system, user)
-
-        try:
-            result = json.loads(out)
-            result['evidence_count'] = len(valid_results)
-            result['search_query'] = search_query
-            if evidence_warning:
-                result['explanation'] = evidence_warning + "\n\n" + result['explanation']
-            return result
-        except Exception as e:
-            return {
-                "verdict": "Insufficient evidence",
-                "explanation": f"Unable to parse verification result. {evidence_warning}",
-                "evidence_count": len(valid_results),
-                "search_query": search_query
-            }
-
-    # ---------- Step 3: Aggregate ----------
+    
     def aggregate_results(self, results):
+        """
+        統計並彙總多個 claim 的驗證結果
+        
+        Args:
+            results: claim 驗證結果列表
+        
+        Returns:
+            (credibility, counts) - 總體可信度和統計數據
+        """
         counts = {"Supported": 0, "Contradicted": 0, "Insufficient evidence": 0}
         for r in results:
             counts[r["verdict"]] += 1
@@ -196,38 +138,105 @@ class FakeNewsAgent:
             credibility = "UNCERTAIN"
 
         return credibility, counts
-
-    # ---------- Main ----------
+    
     def run(self, text, language="zh-TW"):
-        print("Step 1: 提取Claims...")
-        claims = self.extract_claims(text, language=language)
-        print(f"找到 {len(claims)} 個claims\n")
-
-        results = []
-        for i, claim in enumerate(claims, 1):
-            print(f"Step 2.{i}: 驗證 Claim {i}/{len(claims)}")
-            print(f"  Claim: {claim[:80]}...")
-            verification = self.verify_claim(claim, language=language)
-            results.append({
-                "claim": claim,
-                "verdict": verification["verdict"],
-                "explanation": verification["explanation"],
-                "evidence_count": verification.get("evidence_count", 0),
-                "search_query": verification.get("search_query", "")
-            })
-            print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} 個證據)\n")
-
-        credibility, counts = self.aggregate_results(results)
+        """
+        主流程：自動偵測輸入類型並執行驗證
         
-        print(f"Step 3: 彙整結果")
-        print(f"  整體可信度: {credibility}")
-        print(f"  統計: {counts}\n")
+        Args:
+            text: 輸入文本（新聞文章或一般陳述）
+            language: 回應語言（zh-TW, en, auto）
         
-        return {
-            "overall_credibility": credibility,
-            "summary": counts,
-            "claims": results
-        }
+        Returns:
+            驗證結果字典（格式取決於模式）
+        """
+        # 偵測是否為新聞文章結構（包含 "Title:" 和 "Content:"）
+        is_news_article = ("Title:" in text and "Content:" in text)
+        
+        if is_news_article:
+            # === 模式 A: 新聞文章驗證（三層架構）===
+            print("[MODE] News Article Verification (Title→Details→Evidence)\n")
+            print("Step 1: Extract title and verifiable details...")
+            extraction = extract_title_and_details(text, language=language)
+            title = extraction["title"]
+            details = extraction["details"]
+            
+            print(f"Title: {title}")
+            print(f"Found {len(details)} verifiable details\n")
+
+            # Step 2: Verify each detail
+            detail_results = []
+            for i, detail in enumerate(details, 1):
+                print(f"Step 2.{i}: Verify detail {i}/{len(details)}")
+                print(f"  Detail: {detail[:80]}...")
+                verification = verify_claim(detail, language=language)
+                detail_results.append({
+                    "detail": detail,
+                    "verdict": verification["verdict"],
+                    "explanation": verification["explanation"],
+                    "evidence_count": verification.get("evidence_count", 0),
+                    "search_query": verification.get("search_query", ""),
+                    "evidence_breakdown": verification.get("evidence_breakdown", {})
+                })
+                print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} sources)\n")
+
+            # Step 3: Aggregate to judge title
+            print(f"Step 3: Judging title based on detail verification...")
+            title_verdict = self.judge_title_from_details(title, detail_results, language)
+            
+            print(f"  Title credibility: {title_verdict['overall_credibility']}")
+            print(f"  Detail statistics: {title_verdict['detail_summary']}\n")
+            
+            return {
+                "mode": "news_article",
+                "title": title,
+                "title_verdict": title_verdict["overall_credibility"],
+                "title_explanation": title_verdict["explanation"],
+                "detail_summary": title_verdict["detail_summary"],
+                "details": detail_results
+            }
+        
+        else:
+            # === 模式 B: 一般文字驗證（claim-based）===
+            print("[MODE] Plain Text Verification (Claim-based)\n")
+            print("Step 1: Extract verifiable claims...")
+            claims = extract_claims(text, language=language)
+            print(f"Found {len(claims)} claims\n")
+
+            # Step 2: Verify each claim
+            results = []
+            for i, claim in enumerate(claims, 1):
+                print(f"Step 2: Verify claim {i}/{len(claims)}")
+                print(f"  Claim: {claim[:80]}...")
+                verification = verify_claim(claim, language=language)
+                results.append({
+                    "claim": claim,
+                    "verdict": verification["verdict"],
+                    "explanation": verification["explanation"],
+                    "evidence_count": verification.get("evidence_count", 0),
+                    "search_query": verification.get("search_query", ""),
+                    "evidence_breakdown": verification.get("evidence_breakdown", {})
+                })
+                print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} sources)\n")
+
+            # Step 3: Aggregate results
+            print("Step 3: Aggregating results...")
+            credibility, counts = self.aggregate_results(results)
+            print(f"  Overall credibility: {credibility}")
+            print(f"  Verdict statistics: {counts}\n")
+
+            summary = (
+                f"Supported: {counts['Supported']}, "
+                f"Contradicted: {counts['Contradicted']}, "
+                f"Insufficient evidence: {counts['Insufficient evidence']}"
+            )
+
+            return {
+                "mode": "plain_text",
+                "overall_credibility": credibility,
+                "summary": summary,
+                "claims": results
+            }
 
 
 # ---------- For testing in terminal ----------

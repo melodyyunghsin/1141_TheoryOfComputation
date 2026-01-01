@@ -90,28 +90,74 @@ async function verifyText(text, language = "zh-TW") {
 
 // ---- Output layout ----
 function renderResult(result) {
-  let text = `Overall credibility: ${result.overall_credibility}\n\n`;
+  // 根據不同模式渲染不同格式
+  if (result.mode === "news_article") {
+    // === 新聞文章模式 ===
+    let text = `TITLE: ${result.title}\n`;
+    text += "=".repeat(60) + "\n";
+    text += `Title Verdict: ${result.title_verdict}\n\n`;
+    text += `Title Explanation:\n${result.title_explanation}\n\n`;
+    text += "=".repeat(60) + "\n\n";
 
-  text += "Claim verification:\n";
-  text += "=".repeat(50) + "\n\n";
-  
-  result.claims.forEach((c, i) => {
-    text += `${i + 1}. ${c.claim}\n`;
-    text += `   Search query: ${c.search_query || 'N/A'}\n`;
-    text += `   Evidence count: ${c.evidence_count || 0} 個來源\n`;
-    text += `   Verdict: ${c.verdict}\n`;
-    text += `   Explanation:\n`;
+    text += "VERIFIABLE DETAILS:\n";
+    text += "-".repeat(60) + "\n\n";
     
-    // 確保 explanation 是字串
-    const explanation = String(c.explanation || 'No explanation provided');
-    text += `      ${explanation.replace(/\n/g, '\n      ')}\n\n`;
-  });
+    result.details.forEach((d, i) => {
+      text += `${i + 1}. ${d.detail}\n`;
+      text += `   Search query: ${d.search_query || 'N/A'}\n`;
+      text += `   Evidence count: ${d.evidence_count || 0} sources\n`;
+      
+      // 顯示證據分類統計
+      if (d.evidence_breakdown) {
+        text += `   Evidence breakdown: Support ${d.evidence_breakdown.support || 0} | Refute ${d.evidence_breakdown.refute || 0} | Irrelevant ${d.evidence_breakdown.irrelevant || 0}\n`;
+      }
+      
+      text += `   Verdict: ${d.verdict}\n`;
+      text += `   Explanation:\n`;
+      
+      // 確保 explanation 是字串
+      const explanation = String(d.explanation || 'No explanation provided');
+      text += `      ${explanation.replace(/\n/g, '\n      ')}\n\n`;
+    });
 
-  text += "=".repeat(50) + "\n";
-  text += "Summary:\n";
-  for (const [key, value] of Object.entries(result.summary)) {
-    text += `- ${key}: ${value}\n`;
+    text += "=".repeat(80) + "\n";
+    text += "SUMMARY:\n";
+    if (result.detail_summary) {
+      for (const [key, value] of Object.entries(result.detail_summary)) {
+        text += `- ${key}: ${value}\n`;
+      }
+    }
+
+    return text;
+    
+  } else {
+    // === 一般文字模式 (claim-based) ===
+    let text = `Overall Credibility: ${result.overall_credibility}\n`;
+    text += "=".repeat(60) + "\n";
+    text += `Summary: ${result.summary}\n\n`;
+    text += "=".repeat(60) + "\n\n";
+    
+    text += "CLAIMS:\n";
+    text += "-".repeat(60) + "\n\n";
+    
+    result.claims.forEach((c, i) => {
+      text += `${i + 1}. ${c.claim}\n`;
+      text += `   Search query: ${c.search_query || 'N/A'}\n`;
+      text += `   Evidence count: ${c.evidence_count || 0} sources\n`;
+      
+      // 顯示證據分類統計
+      if (c.evidence_breakdown) {
+        text += `   Evidence breakdown: Support ${c.evidence_breakdown.support || 0} | Refute ${c.evidence_breakdown.refute || 0} | Irrelevant ${c.evidence_breakdown.irrelevant || 0}\n`;
+      }
+      
+      text += `   Verdict: ${c.verdict}\n`;
+      text += `   Explanation:\n`;
+      
+      // 確保 explanation 是字串
+      const explanation = String(c.explanation || 'No explanation provided');
+      text += `      ${explanation.replace(/\n/g, '\n      ')}\n\n`;
+    });
+    
+    return text;
   }
-
-  return text;
 }

@@ -1,0 +1,636 @@
+import os
+import json
+import re
+import requests
+from dotenv import load_dotenv
+from qa_tool import web_search
+
+load_dotenv()
+
+API_BASE_URL = os.getenv("API_BASE_URL")
+API_KEY = os.getenv("API_KEY")
+MODEL = "gpt-oss:20b"
+
+
+class FakeNewsAgent:
+    def __init__(self):
+        if not API_KEY:
+            raise RuntimeError("API_KEY not set")
+        self.headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+    # ---------- LLM helper ----------
+    def call_llm(self, system_prompt, user_prompt):
+        payload = {
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+        }
+        r = requests.post(
+            f"{API_BASE_URL}/api/chat",
+            headers=self.headers,
+            json=payload,
+            timeout=120,
+        )
+        r.raise_for_status()
+        return r.json()["message"]["content"]
+    
+    # ---------- JSON parser helper ----------
+    def parse_json_response(self, llm_output):
+        """
+        清理 LLM 回應中的 markdown 代碼塊並解析 JSON
+        處理 ```json ... ``` 或 ``` ... ``` 包裹的情況
+        """
+        cleaned = llm_output.strip()
+        
+        # 移除 markdown 代碼塊標記
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        
+        cleaned = cleaned.strip()
+        
+        return json.loads(cleaned)
+
+    # ---------- Step 1: Extract title and verifiable details ----------
+    def extract_title_and_details(self, text, language="zh-TW"):
+        """
+        從新聞文本中提取標題和需要驗證的關鍵細節
+        Title = 主要主張
+        Details = Content中支撐Title的具體事實
+        """
+        # 根據語言設定回應語言
+        language_instruction = ""
+        if language == "zh-TW":
+            language_instruction = "CRITICAL: Extract title and details in Traditional Chinese (繁體中文)."
+        elif language == "en":
+            language_instruction = "CRITICAL: Extract title and details in English."
+        else:
+            language_instruction = "CRITICAL: Extract title and details in Traditional Chinese (繁體中文)."
+        
+        system = (
+            f"{language_instruction}\n\n"
+            "You are analyzing a news article to extract:\n"
+            "1. The TITLE (main claim of the article)\n"
+            "2. VERIFIABLE DETAILS that DIRECTLY SUPPORT the title's core claim\n\n"
+            "CRITICAL: Details must be directly related to the title's main assertion.\n"
+            "- If title claims '3000 police deployed' → extract numbers that add up to 3000\n"
+            "- If title claims 'highest security ever' → extract evidence of scale/comparison\n"
+            "- DO NOT extract peripheral details that don't directly prove the title\n\n"
+            "Details should be:\n"
+            "- Specific numbers that support the title's claim (e.g., '1300 police', '2900 MRT staff')\n"
+            "- Key events that directly relate to the title's main point\n"
+            "- Evidence that confirms or refutes the title's core assertion\n\n"
+            "Extract 2-4 key details (quality over quantity).\n"
+            "Ignore: peripheral details, opinions, vague statements, minor supporting facts.\n\n"
+            "Return JSON with fields: title (string), details (array of strings).\n"
+            "The extracted title and details MUST be in the language specified above."
+        )
+        
+        out = self.call_llm(system, text)
+
+        try:
+            # Debug: 顯示 LLM 原始回應
+            print(f"  LLM Response (first 500 chars): {out[:500]}")
+            
+            result = self.parse_json_response(out)
+            title = result.get("title", "")
+            details = result.get("details", [])
+            
+            # 確保 details 是 list
+            if not isinstance(details, list):
+                print(f"  Warning: details is not a list, got {type(details)}")
+                details = []
+            
+            # 限制最多5個細節
+            details = details[:5]
+            
+            print(f"  Extracted: title={title[:50]}..., details count={len(details)}")
+            
+            return {"title": title, "details": details}
+        except Exception as e:
+            print(f"  Error parsing LLM response: {e}")
+            print(f"  Raw output: {out[:300]}")
+            
+            # 備用：嘗試從文本中提取Title行
+            lines = text.split('\n')
+            title = ""
+            for line in lines:
+                if line.startswith("Title:"):
+                    title = line.replace("Title:", "").strip()
+                    break
+            
+            return {"title": title or "Unknown", "details": []}
+
+    # ---------- Alternative Step 1: Extract independent claims (for plain text input) ----------
+    def extract_claims(self, text, language="zh-TW"):
+        """
+        從一般文字中提取獨立的可驗證主張
+        用於：使用者直接輸入一段話，而非完整的新聞文章
+        """
+        # 根據語言設定回應語言
+        language_instruction = ""
+        if language == "zh-TW":
+            language_instruction = "Extract claims in Traditional Chinese (繁體中文)."
+        elif language == "en":
+            language_instruction = "Extract claims in English."
+        else:
+            language_instruction = "Extract claims in Traditional Chinese (繁體中文)."
+        
+        system = (
+            f"{language_instruction}\n\n"
+            "Extract 3-5 verifiable factual claims from the text.\n"
+            "Focus on:\n"
+            "- Specific events that happened\n"
+            "- Concrete numbers or statistics\n"
+            "- Statements that can be fact-checked\n\n"
+            "Ignore:\n"
+            "- Opinions or subjective statements\n"
+            "- Vague or unclear claims\n"
+            "- Repeated information\n\n"
+            "Return a JSON array of strings (the claims).\n"
+            "The extracted claims MUST be in the language specified above."
+        )
+        
+        try:
+            out = self.call_llm(system, text)
+            claims = self.parse_json_response(out)
+            if isinstance(claims, list):
+                return claims[:5]  # 最多5個
+            return []
+        except Exception:
+            # 備用：將整段文字當作一個claim
+            return [text[:500]]  # 限制長度
+
+    # ---------- Step 2a: Generate search query ----------
+    def generate_search_query(self, claim):
+        """從claim中提取最佳搜尋關鍵字"""
+        system = (
+            "Extract the most important keywords for fact-checking this claim.\n"
+            "CRITICAL: Keep the query in the SAME LANGUAGE as the claim.\n"
+            "- If claim is in Chinese → return Chinese keywords\n"
+            "- If claim is in English → return English keywords\n\n"
+            "Return ONLY 2-4 key terms that would help find relevant evidence.\n"
+            "Focus on:\n"
+            "- Names of people, organizations, places\n"
+            "- Specific events or policies\n"
+            "- Dates or time periods\n"
+            "- Core factual assertions\n\n"
+            "MUST include location keywords if present (e.g., 台北, 台灣, Beijing, Taiwan)\n"
+            "Remove: opinions, adjectives, unnecessary words.\n"
+            "Return as a simple search query string (not JSON)."
+        )
+        
+        try:
+            query = self.call_llm(system, f"Claim: {claim}")
+            # 清理回應，移除引號和多餘空白
+            query = query.strip().strip('"').strip("'")
+            
+            # 方案2：強制加入地域關鍵字（如果claim中有但query中沒有）
+            location_keywords = ['台北', '臺北', '台中', '臺中', '台南', '臺南', '高雄', '台灣', '臺灣', 'Taipei', 'Taichung', 'Tainan', 'Kaohsiung', 'Taiwan']
+            for loc in location_keywords:
+                if loc in claim and loc not in query:
+                    query = f"{loc} {query}"
+                    break
+            
+            return query if len(query) > 0 else claim
+        except Exception:
+            # 備用：直接使用claim
+            return claim
+    
+    # ---------- Step 2b: Pre-filter irrelevant evidence ----------
+    def is_evidence_potentially_relevant(self, claim, evidence_title, evidence_body):
+        """快速預過濾：只過濾明顯錯誤地點的證據"""
+        evidence_text = (evidence_title + " " + evidence_body)
+        
+        # 檢測claim中的台灣相關地點
+        taiwan_locations = ['台北', '臺北', '台中', '臺中', '台南', '臺南', '高雄', '台灣', '臺灣', '新北']
+        has_taiwan_location = any(loc in claim for loc in taiwan_locations)
+        
+        # 如果claim提到台灣地點，但證據提到明顯不相關的國外地點，則過濾
+        if has_taiwan_location:
+            irrelevant_locations = [
+                'San Diego', 'Beijing', '北京', 'Shanghai', '上海', 
+                'Hong Kong', '香港', 'Tokyo', '東京', 'Seoul', '首爾',
+                'Singapore', '新加坡', 'London', 'New York', 'Paris'
+            ]
+            # 檢查是否有明顯衝突的地點（同時出現在證據中但不在claim中）
+            for irrelevant_loc in irrelevant_locations:
+                if irrelevant_loc in evidence_text and irrelevant_loc not in claim:
+                    return False
+        
+        # 預設：保留證據給LLM分析（寬鬆策略）
+        return True
+
+    # ---------- Step 2c: Analyze evidence stance ----------
+    def analyze_evidence_stance(self, claim, evidence_title, evidence_body):
+        """判斷單個證據與claim的關係：支持/反駁/無關"""
+        system = (
+            "Analyze if the evidence supports, refutes, or is irrelevant to the claim.\n"
+            "Return ONLY one word: support / refute / irrelevant\n"
+            "Do not explain, just return the single word."
+        )
+        
+        user = f"Claim: {claim}\n\nEvidence:\nTitle: {evidence_title}\nContent: {evidence_body}"
+        
+        try:
+            result = self.call_llm(system, user).strip().lower()
+            # 標準化回應
+            if "support" in result:
+                return "support"
+            elif "refute" in result or "contradict" in result:
+                return "refute"
+            else:
+                return "irrelevant"
+        except Exception:
+            return "irrelevant"
+
+    # ---------- Step 2d: Verify one claim ----------
+    def verify_claim(self, claim, language="zh-TW"):
+        # 初始化預設值，避免變數未定義
+        search_query = claim
+        valid_results = []
+        
+        try:
+            # 先生成更精準的搜尋查詢
+            search_query = self.generate_search_query(claim)
+            print(f"  → 搜尋關鍵字: {search_query}")
+        except Exception as e:
+            print(f"  Warning: Search query generation failed ({e}), using original claim")
+            search_query = claim
+        
+        try:
+            # 搜尋至少10個結果
+            search_results = web_search(search_query, max_results=10)
+            
+            # 過濾有效結果
+            valid_results = [r for r in search_results if r.get('title') and r.get('body')]
+        except Exception as e:
+            print(f"  Error: Search failed ({e})")
+            return {
+                "verdict": "Insufficient evidence",
+                "explanation": f"Search error: {str(e)}",
+                "evidence_count": 0,
+                "search_query": search_query
+            }
+        
+        # 即使少於3個也繼續分析，但會在結果中註明
+        evidence_warning = ""
+        if len(valid_results) < 3:
+            evidence_warning = f"[Warning] Only found {len(valid_results)} evidence source(s). Recommended: at least 3 sources."
+        
+        if len(valid_results) == 0:
+            return {
+                "verdict": "Insufficient evidence",
+                "explanation": "No relevant evidence found. Cannot verify this claim.",
+                "evidence_count": 0,
+                "search_query": search_query,
+                "evidence_breakdown": {"support": [], "refute": [], "irrelevant": []}
+            }
+
+        # 分析每個證據的立場
+        print(f"  → Analyzing stance of {len(valid_results)} evidence sources...")
+        
+        # 先預過濾明顯不相關的結果
+        filtered_results = []
+        filtered_out = 0
+        for r in valid_results:
+            if self.is_evidence_potentially_relevant(claim, r.get('title', ''), r.get('body', '')):
+                filtered_results.append(r)
+            else:
+                filtered_out += 1
+        
+        if filtered_out > 0:
+            print(f"     Pre-filtered {filtered_out} obviously irrelevant sources")
+        
+        # 如果過濾後沒有結果，返回證據不足
+        if len(filtered_results) == 0:
+            return {
+                "verdict": "Insufficient evidence",
+                "explanation": f"All {len(valid_results)} search results were irrelevant to the claim (wrong location/topic).",
+                "evidence_count": len(valid_results),
+                "search_query": search_query,
+                "evidence_breakdown": {"support": 0, "refute": 0, "irrelevant": len(valid_results)}
+            }
+        
+        categorized_evidence = {
+            "support": [],
+            "refute": [],
+            "irrelevant": []
+        }
+        
+        for r in filtered_results:
+            title = r.get('title', '')
+            body = r.get('body', '')
+            stance = self.analyze_evidence_stance(claim, title, body)
+            
+            categorized_evidence[stance].append({
+                "title": title,
+                "snippet": body[:200] + "..." if len(body) > 200 else body,
+                "href": r.get('href', '')
+            })
+        
+        support_count = len(categorized_evidence["support"])
+        refute_count = len(categorized_evidence["refute"])
+        irrelevant_count = len(categorized_evidence["irrelevant"])
+        
+        # 加上被預過濾掉的數量
+        total_irrelevant = irrelevant_count + filtered_out
+        
+        print(f"     Support: {support_count}, Refute: {refute_count}, Irrelevant: {total_irrelevant} (pre-filtered: {filtered_out})")
+        
+        # 建立分類後的證據摘要給LLM
+        context = ""
+        
+        if categorized_evidence["support"]:
+            context += "=== Supporting Evidence ===\n"
+            for i, ev in enumerate(categorized_evidence["support"], 1):
+                context += f"{i}. [{ev['title']}]\n   {ev['snippet']}\n\n"
+        
+        if categorized_evidence["refute"]:
+            context += "=== Refuting Evidence ===\n"
+            for i, ev in enumerate(categorized_evidence["refute"], 1):
+                context += f"{i}. [{ev['title']}]\n   {ev['snippet']}\n\n"
+        
+        if categorized_evidence["irrelevant"]:
+            context += f"=== Irrelevant Evidence ({total_irrelevant} sources total, {filtered_out} pre-filtered) ===\n(Not shown for brevity)\n\n"
+
+        # 根據語言設定回應語言
+        language_instruction = ""
+        if language == "zh-TW":
+            language_instruction = "You should respond in Traditional Chinese (繁體中文). All explanations must be in Traditional Chinese."
+        elif language == "en":
+            language_instruction = "You should respond in English. All explanations must be in English."
+        else:
+            language_instruction = "You should respond in Traditional Chinese (繁體中文). All explanations must be in Traditional Chinese."  # 預設
+
+        system = (
+            f"{language_instruction}\n\n"
+            "You are verifying a factual claim using categorized evidence.\n"
+            f"Evidence summary:\n"
+            f"- Supporting evidence: {support_count}\n"
+            f"- Refuting evidence: {refute_count}\n"
+            f"- Irrelevant evidence: {total_irrelevant} (filtered out)\n\n"
+            "Based on the categorized evidence, classify the claim as:\n"
+            "- Supported: If supporting evidence is strong and refuting evidence is weak/absent\n"
+            "- Contradicted: If refuting evidence is strong and supporting evidence is weak/absent\n"
+            "- Insufficient evidence: If evidence is too weak, contradictory, or mostly irrelevant\n\n"
+            "In your explanation, mention:\n"
+            "1. Key supporting/refuting evidence\n"
+            "2. Why you reached this conclusion\n"
+            "3. Any uncertainty or conflicting information\n\n"
+            f"{evidence_warning}\n"
+            f"IMPORTANT: Your entire response (verdict + explanation) must be in the language specified above.\n"
+            "Return JSON with fields: verdict, explanation."
+        )
+
+        user = f"Claim:\n{claim}\n\n{context}"
+
+        out = self.call_llm(system, user)
+
+        try:
+            result = self.parse_json_response(out)
+            result['evidence_count'] = len(valid_results)
+            result['search_query'] = search_query
+            result['evidence_breakdown'] = {
+                "support": support_count,
+                "refute": refute_count,
+                "irrelevant": total_irrelevant
+            }
+            if evidence_warning:
+                result['explanation'] = evidence_warning + "\n\n" + result['explanation']
+            return result
+        except Exception as e:
+            return {
+                "verdict": "Insufficient evidence",
+                "explanation": f"Unable to parse verification result. {evidence_warning}",
+                "evidence_count": len(valid_results),
+                "search_query": search_query,
+                "evidence_breakdown": {
+                    "support": support_count,
+                    "refute": refute_count,
+                    "irrelevant": total_irrelevant
+                }
+            }
+
+    # ---------- Step 3: Aggregate ----------
+    def aggregate_results(self, results):
+        counts = {"Supported": 0, "Contradicted": 0, "Insufficient evidence": 0}
+        for r in results:
+            counts[r["verdict"]] += 1
+
+        if counts["Contradicted"] > 0:
+            credibility = "LOW"
+        elif counts["Supported"] > 0 and counts["Insufficient evidence"] == 0:
+            credibility = "HIGH"
+        else:
+            credibility = "UNCERTAIN"
+
+        return credibility, counts
+    
+    # ---------- Step 3: Judge title based on details ----------
+    def judge_title_from_details(self, title, detail_results, language="zh-TW"):
+        """基於細節驗證結果判斷標題的可信度"""
+        # 統計細節驗證結果
+        detail_counts = {"Supported": 0, "Contradicted": 0, "Insufficient evidence": 0}
+        for detail in detail_results:
+            detail_counts[detail["verdict"]] += 1
+        
+        # 根據語言設定回應語言
+        language_instruction = ""
+        if language == "zh-TW":
+            language_instruction = "CRITICAL: You MUST respond in Traditional Chinese (繁體中文). All explanations must be in Traditional Chinese."
+        elif language == "en":
+            language_instruction = "CRITICAL: You MUST respond in English. All explanations must be in English."
+        else:
+            language_instruction = "CRITICAL: You MUST respond in Traditional Chinese (繁體中文). All explanations must be in Traditional Chinese."
+        
+        # 建立細節摘要給LLM
+        details_summary = ""
+        for i, detail in enumerate(detail_results, 1):
+            details_summary += f"{i}. {detail['detail']}\n"
+            details_summary += f"   Verdict: {detail['verdict']}\n"
+            details_summary += f"   Brief: {detail['explanation'][:100]}...\n\n"
+        
+        system = (
+            f"{language_instruction}\n\n"
+            "You are judging whether a news article's TITLE is credible based on the verification of specific details from the content.\n\n"
+            f"Title to judge: {title}\n\n"
+            f"Details verification summary:\n"
+            f"- Supported: {detail_counts['Supported']}\n"
+            f"- Contradicted: {detail_counts['Contradicted']}\n"
+            f"- Insufficient evidence: {detail_counts['Insufficient evidence']}\n\n"
+            "Decision logic:\n"
+            "- If most details are SUPPORTED → Title is likely TRUE\n"
+            "- If key details are CONTRADICTED → Title is FALSE or MISLEADING\n"
+            "- If most details lack evidence → Cannot determine title credibility\n\n"
+            "Classify the title as:\n"
+            "- CREDIBLE: Strong evidence supports the title\n"
+            "- MISLEADING: Evidence contradicts or undermines the title\n"
+            "- UNCERTAIN: Insufficient evidence to judge\n\n"
+            "In your explanation:\n"
+            "1. Which details support/contradict the title\n"
+            "2. Overall assessment of title accuracy\n"
+            "3. Any caveats or uncertainties\n\n"
+            "Return JSON with fields: credibility (CREDIBLE/MISLEADING/UNCERTAIN), explanation.\n"
+            "Your entire response must be in the language specified at the top."
+        )
+        
+        user = f"Details verification:\n{details_summary}"
+        
+        try:
+            out = self.call_llm(system, user)
+            result = self.parse_json_response(out)
+            
+            # 標準化credibility值
+            cred = result.get("credibility", "UNCERTAIN").upper()
+            if "CREDIBLE" in cred and "MISLEADING" not in cred:
+                overall_credibility = "CREDIBLE"
+            elif "MISLEADING" in cred or "FALSE" in cred:
+                overall_credibility = "MISLEADING"
+            else:
+                overall_credibility = "UNCERTAIN"
+            
+            return {
+                "overall_credibility": overall_credibility,
+                "explanation": result.get("explanation", ""),
+                "detail_summary": detail_counts
+            }
+        except Exception as e:
+            # 備用：簡單規則
+            if detail_counts["Contradicted"] > 0:
+                overall_credibility = "MISLEADING"
+            elif detail_counts["Supported"] > detail_counts["Insufficient evidence"]:
+                overall_credibility = "CREDIBLE"
+            else:
+                overall_credibility = "UNCERTAIN"
+            
+            return {
+                "overall_credibility": overall_credibility,
+                "explanation": f"Unable to generate detailed explanation. Based on {detail_counts['Supported']} supported, {detail_counts['Contradicted']} contradicted, {detail_counts['Insufficient evidence']} insufficient evidence.",
+                "detail_summary": detail_counts
+            }
+
+    # ---------- Main ----------
+    def run(self, text, language="zh-TW"):
+        """
+        主流程：自動偵測輸入類型
+        - 如果是新聞文章（有Title/Content結構）→ 使用三層驗證架構
+        - 如果是一般文字 → 使用claim-based驗證
+        """
+        # 偵測是否為新聞文章結構（包含 "Title:" 和 "Content:"）
+        is_news_article = ("Title:" in text and "Content:" in text)
+        
+        if is_news_article:
+            # === 模式 A: 新聞文章驗證（三層架構）===
+            print("[MODE] News Article Verification (Title→Details→Evidence)\n")
+            print("Step 1: Extract title and verifiable details...")
+            extraction = self.extract_title_and_details(text, language=language)
+            title = extraction["title"]
+            details = extraction["details"]
+            
+            print(f"Title: {title}")
+            print(f"Found {len(details)} verifiable details\n")
+
+            # Step 2: Verify each detail
+            detail_results = []
+            for i, detail in enumerate(details, 1):
+                print(f"Step 2.{i}: Verify detail {i}/{len(details)}")
+                print(f"  Detail: {detail[:80]}...")
+                verification = self.verify_claim(detail, language=language)
+                detail_results.append({
+                    "detail": detail,
+                    "verdict": verification["verdict"],
+                    "explanation": verification["explanation"],
+                    "evidence_count": verification.get("evidence_count", 0),
+                    "search_query": verification.get("search_query", ""),
+                    "evidence_breakdown": verification.get("evidence_breakdown", {})
+                })
+                print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} sources)\n")
+
+            # Step 3: Aggregate to judge title
+            print(f"Step 3: Judging title based on detail verification...")
+            title_verdict = self.judge_title_from_details(title, detail_results, language)
+            
+            print(f"  Title credibility: {title_verdict['overall_credibility']}")
+            print(f"  Detail statistics: {title_verdict['detail_summary']}\n")
+            
+            return {
+                "mode": "news_article",
+                "title": title,
+                "title_verdict": title_verdict["overall_credibility"],
+                "title_explanation": title_verdict["explanation"],
+                "detail_summary": title_verdict["detail_summary"],
+                "details": detail_results
+            }
+        
+        else:
+            # === 模式 B: 一般文字驗證（claim-based）===
+            print("[MODE] Plain Text Verification (Claim-based)\n")
+            print("Step 1: Extract verifiable claims...")
+            claims = self.extract_claims(text, language=language)
+            print(f"Found {len(claims)} claims\n")
+
+            # Step 2: Verify each claim
+            results = []
+            for i, claim in enumerate(claims, 1):
+                print(f"Step 2: Verify claim {i}/{len(claims)}")
+                print(f"  Claim: {claim[:80]}...")
+                verification = self.verify_claim(claim, language=language)
+                results.append({
+                    "claim": claim,
+                    "verdict": verification["verdict"],
+                    "explanation": verification["explanation"],
+                    "evidence_count": verification.get("evidence_count", 0),
+                    "search_query": verification.get("search_query", ""),
+                    "evidence_breakdown": verification.get("evidence_breakdown", {})
+                })
+                print(f"  Verdict: {verification['verdict']} ({verification.get('evidence_count', 0)} sources)\n")
+
+            # Step 3: Aggregate results
+            print("Step 3: Aggregating results...")
+            credibility, counts = self.aggregate_results(results)
+            print(f"  Overall credibility: {credibility}")
+            print(f"  Verdict statistics: {counts}\n")
+
+            summary = (
+                f"Supported: {counts['Supported']}, "
+                f"Contradicted: {counts['Contradicted']}, "
+                f"Insufficient evidence: {counts['Insufficient evidence']}"
+            )
+
+            return {
+                "mode": "plain_text",
+                "overall_credibility": credibility,
+                "summary": summary,
+                "claims": results
+            }
+
+
+# ---------- For testing in terminal ----------
+def main():
+    agent = FakeNewsAgent()
+    print("Fake News Verification Agent (Terminal Mode)")
+    print("Type 'quit' to exit.")
+    print("-" * 50)
+
+    while True:
+        text = input("\nInput article or claim:\n> ")
+        if text.lower() in {"quit", "exit"}:
+            break
+
+        result = agent.run(text)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

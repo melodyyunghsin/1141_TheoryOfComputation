@@ -1,14 +1,45 @@
-# QA Agent with Web Search - TOC Final Project
+# Fake News Verification System - TOC Final Project
 
-智能問答 Agent，結合網路搜尋與 LLM API，能夠自動搜尋資訊並生成答案。
+假新聞驗證系統，結合 Chrome Extension、Flask 後端與 LLM API，能夠自動檢測新聞文章和陳述的真實性。
 
 ## 📋 專案功能
 
-- ✅ 網路搜尋（使用 DuckDuckGo）
-- ✅ 維基百科專門搜尋
-- ✅ 最新資訊查詢
-- ✅ 整合 LLM API 生成答案
-- ✅ 支援 Open WebUI 整合
+### 核心功能
+- ✅ **自動模式偵測**：支援新聞文章和一般文字兩種驗證模式
+- ✅ **Chrome Extension**：一鍵檢測網頁新聞真假
+- ✅ **智能提取**：從新聞中提取標題和關鍵細節
+- ✅ **網路搜尋驗證**：自動搜尋外部證據
+- ✅ **證據立場分析**：判斷證據支持/反駁/無關
+- ✅ **多語言支援**：繁體中文、英文、自動偵測
+- ✅ **模組化架構**：易於擴展新功能
+
+### 驗證模式
+
+#### 模式 A：新聞文章驗證（Title → Details → Evidence）
+```
+網頁新聞
+   ↓
+提取 Title（主張）+ Details（支撐細節）
+   ↓
+對每個 Detail 搜尋外部證據
+   ↓
+分析證據立場（支持/反駁/無關）
+   ↓
+彙總判斷 Title 可信度（CREDIBLE/MISLEADING/UNCERTAIN）
+```
+
+#### 模式 B：一般文字驗證（Claim-based）
+```
+用戶輸入文字
+   ↓
+提取可驗證的 Claims
+   ↓
+對每個 Claim 搜尋外部證據
+   ↓
+統計結果（支持/反駁/證據不足）
+   ↓
+給出總體可信度（HIGH/LOW/UNCERTAIN）
+```
 
 ---
 
@@ -16,8 +47,8 @@
 
 ### 1. Clone 專案
 ```bash
-git clone https://github.com/Lienlientina/1132_TheoryOfComputation.git
-cd 1132_TheoryOfComputation
+git clone https://github.com/Lienlientina/1141_TheoryOfComputation.git
+cd "1141_TheoryOfComputation"
 ```
 
 ### 2. 安裝依賴套件
@@ -32,190 +63,403 @@ pip install -r requirements.txt
 copy .env.example .env
 ```
 
-編輯 `.env` 檔案，將 `your-api-key-here` 替換為你的實際 API key：
+編輯 `.env` 檔案，填入你的 API Key：
 ```env
 API_BASE_URL=https://api-gateway.netdb.csie.ncku.edu.tw
 API_KEY=你的實際API金鑰
-
-OPENAI_API_BASE_URL=https://api-gateway.netdb.csie.ncku.edu.tw
-OPENAI_API_KEY=你的實際API金鑰
 ```
 
-### 4. 測試 QA Tool
+### 4. 啟動 Flask 後端
 ```bash
-python qa_tool.py
+python fake_news_server.py
 ```
 
-### 5. 運行 QA Agent（推薦）
-```bash
-python qa_agent.py
+看到以下訊息表示成功：
+```
+ * Running on http://127.0.0.1:5000
 ```
 
-這會啟動互動式 QA Agent，自動整合網路搜尋和 LLM 回答！
+### 6. 安裝 Chrome Extension
+
+1. 開啟 Chrome，進入 `chrome://extensions/`
+2. 開啟右上角「開發人員模式」
+3. 點擊「載入未封裝項目」
+4. 選擇專案中的 `extension` 資料夾
+5. Extension 安裝完成！
+
+### 7. 開始使用
+
+#### 方式 A：檢測網頁新聞 ⭐
+1. 瀏覽任意新聞網站（例如：聯合新聞網、自由時報）
+2. 點擊瀏覽器右上角的 Extension 圖標
+3. 選擇語言（Auto-detect / English / 繁體中文）
+4. 點擊「Analyze Current Page」
+5. 等待 30-60 秒，查看驗證結果
+
+#### 方式 B：手動輸入文字驗證
+1. 點擊 Extension 圖標
+2. 在文字框輸入要驗證的陳述（例如：「台灣2024年GDP成長率5%」）
+3. 選擇語言
+4. 點擊「Verify Text」
+5. 查看驗證結果
 
 ---
 
 ## 💻 使用方式
 
-### 方法 A：命令列 QA Agent（主要 Demo 方式）⭐
+### Chrome Extension 使用指南
+
+#### 1. 自動提取網頁內容
+Extension 會自動提取：
+- 📰 **標題**：`<h1>`, `<title>`, 或 `og:title` meta tag
+- 👤 **作者**：`<meta name="author">` 或常見作者選擇器
+- 📅 **發布時間**：`<time>` 標籤或日期相關 meta tag
+- 📄 **內文**：過濾廣告、導航列、留言後的主要段落
+
+#### 2. 語言選擇
+- **Auto-detect**：根據 HTML `lang` 屬性或中文字符自動判斷
+- **English**：強制英文回應
+- **繁體中文**：強制繁體中文回應
+
+#### 3. 閱讀驗證結果
+
+
+### 命令列使用（開發/測試）
 
 #### 直接運行 Agent
 ```bash
-python qa_agent.py
+python fake_news_agent.py
 ```
 
-#### 使用方式
-- **預設行為**：輸入問題 → 自動搜尋網路 → LLM 分析回答
-- **直接對話**：輸入 `chat: 你的訊息` → 不搜尋，直接問 LLM
-- **離開**：輸入 `quit` 或 `exit`
-
-#### 範例對話
+#### 互動式測試
 ```
-You: 台灣的首都是哪裡
-🔍 Searching web...
-✅ Found 3 results
-🤖 Querying LLM...
-Agent: 台灣的首都是台北市...
-
-You: chat: 你好
-Agent: 你好！有什麼我可以幫助你的嗎？
-
-You: quit
-👋 Goodbye!
+Input article or claim:
+> Title: 測試標題
+> Content: 測試內容...
 ```
 
 ---
 
-### 方法 B：Open WebUI 整合（額外展示）
-
-#### 1. 安裝 Open WebUI
-```bash
-pip install open-webui
-```
-
-#### 2. 啟動 Open WebUI
-```bash
-python start_openwebui.py
-```
-
-#### 3. 在瀏覽器開啟
-```
-http://localhost:8080
-```
-
-#### 4. 添加 QA Tool
-1. 進入 **Workspace** > **Tools**（或 Settings > Tools）
-2. 點擊 **+** 創建新工具
-3. 複製貼上 `qa_tool.py` 的全部內容
-4. 儲存並啟用工具
-
-#### 5. 開始使用
-在聊天中詢問問題，例如：
-- "搜尋台灣的首都是哪裡"
-- "查詢 2025 年台灣總統"
-- "Machine Learning 是什麼"
-
-LLM 會自動呼叫 QA Tool 搜尋網路並回答！
-
----
-
-## 📁 專案結構
+## 📁 專案結構（重構後）
 
 ```
 .
-├── .env.example          # API 配置範本
-├── .gitignore            # Git 忽略規則
-├── qa_tool.py            # 搜尋工具模組（純函數）
-├── qa_agent.py           # 主 Agent（整合 Tool + LLM）⭐
-├── start_openwebui.py    # Open WebUI 啟動腳本
-├── requirements.txt      # Python 依賴套件
-└── README.md             # 本說明文件
+├── extension/                    # Chrome Extension
+│   ├── manifest.json            # Extension 配置
+│   ├── popup.html               # UI 介面
+│   ├── popup.js                 # UI 邏輯
+│   └── content.js               # 網頁內容提取
+│
+├── fake_news_server.py          # Flask 後端 API
+├── fake_news_agent.py           # 主 Agent（協調器）⭐
+│
+├── llm_helpers.py               # LLM API 和 JSON 解析
+├── extractors.py                # Title/Details/Claims 提取
+├── evidence_processor.py        # 證據搜尋、過濾、驗證
+│
+├── qa_tool.py                   # 網路搜尋工具
+├── qa_agent.py                  # QA Agent（舊功能保留）
+│
+├── .env.example                 # API 配置範本
+├── .gitignore                   # Git 忽略規則
+├── requirements.txt             # Python 依賴套件
+└── README.md                    # 本說明文件
 ```
 
-### 檔案說明
+### 模組說明
 
-- **`qa_tool.py`** - 搜尋工具模組（可重用）
-  - `web_search()` - 純搜尋函數
-  - `format_search_results()` - 格式化結果
-  - `Tools` class - Open WebUI 兼容包裝
+#### 核心模組
 
-- **`qa_agent.py`** - 主 QA Agent ⭐
-  - 整合搜尋工具 + LLM API
-  - 完整的問答流程
-  - 互動式命令列介面
-  - **這是主要的 Demo 程式**
+**`fake_news_agent.py`** (189 行) - 主控 Agent ⭐
+- 自動模式偵測（新聞 vs 一般文字）
+- 協調三層驗證流程
+- 彙總並判斷標題可信度
+- CLI 測試介面
 
-- **`start_openwebui.py`** - Open WebUI 配置啟動腳本
-  - 自動設置環境變數
-  - 簡化啟動流程
+**`llm_helpers.py`** (86 行) - LLM 工具
+- `call_llm()` - 統一的 LLM API 調用
+- `parse_json_response()` - 清理 markdown 並解析 JSON
+- 處理 API 錯誤和超時
 
-- **`.env.example`** - 環境變數範本
-  - 包含 API 配置格式
-  - 不含真實 API Key（安全）
+**`extractors.py`** (134 行) - 提取器
+- `extract_title_and_details()` - 從新聞提取標題和關鍵細節
+- `extract_claims()` - 從一般文字提取可驗證主張
+- 強制 LLM 只從文本提取，不編造資訊
+
+**`evidence_processor.py`** (313 行) - 證據處理器
+- `generate_search_query()` - 優化搜尋關鍵字
+- `is_evidence_potentially_relevant()` - 預過濾不相關證據
+- `analyze_evidence_stance()` - 判斷證據立場
+- `verify_claim()` - 完整的 claim 驗證流程
+
+#### Extension 模組
+
+**`extension/content.js`** - 內容提取
+- `extractTitle()` - 提取標題（多種策略）
+- `extractAuthor()` - 提取作者
+- `extractPublishDate()` - 提取發布時間
+- `extractMainContent()` - 提取主要內容（過濾噪音）
+- `isNoiseElement()` - 判斷元素是否為廣告/導航
+
+**`extension/popup.js`** - UI 邏輯
+- `getLanguage()` - 讀取語言選擇
+- `verifyText()` - 發送驗證請求到後端
+- `renderResult()` - 根據模式顯示結果
+
+**`fake_news_server.py`** - Flask API
+- `/verify` POST - 驗證端點
+- 接收 `{text, language}`
+- 返回驗證結果 JSON
 
 ---
 
-## 🛠️ API 使用範例
+---
 
-### 使用純工具函數
-```python
-from qa_tool import web_search, format_search_results
+## 🏗️ 系統架構
 
-# 搜尋網路
-results = web_search("台灣的首都", max_results=3)
-
-# 格式化結果
-formatted = format_search_results(results)
-print(formatted)
+### 整體架構
+```
+Chrome Extension (UI)
+        ↓ HTTP POST
+Flask Server (:5000)
+        ↓
+fake_news_agent.py (主控)
+        ↓
+   ┌────┴────┐
+   ↓         ↓
+extractors  evidence_processor
+   ↓         ↓
+   └─→ llm_helpers ←─┘
+        ↓
+   LLM API (gpt-oss:20b)
+        ↓
+   DuckDuckGo Search
 ```
 
-### 使用 QA Agent
-```python
-from qa_agent import QAAgent
+### 三層驗證流程（新聞模式）
 
-# 初始化 Agent
-agent = QAAgent()
+```
+1. 提取層 (Extraction)
+   ├─ 輸入：網頁新聞全文
+   ├─ 處理：extractors.extract_title_and_details()
+   └─ 輸出：Title + 2-4 個 Details
 
-# 搜尋並回答
-result = agent.search_and_answer("台灣的首都是哪裡？")
-print(result['answer'])
+2. 驗證層 (Verification)
+   ├─ 對每個 Detail：
+   │   ├─ 生成搜尋查詢 (generate_search_query)
+   │   ├─ 搜尋外部證據 (web_search)
+   │   ├─ 預過濾不相關證據 (is_evidence_potentially_relevant)
+   │   ├─ 分析證據立場 (analyze_evidence_stance)
+   │   └─ 判定 Detail 結果 (Supported/Contradicted/Insufficient)
+   └─ 輸出：每個 Detail 的驗證結果
 
-# 直接對話（不搜尋）
-answer = agent.chat("你好", use_search=False)
-print(answer)
+3. 判斷層 (Judgment)
+   ├─ 輸入：所有 Detail 的驗證結果
+   ├─ 處理：judge_title_from_details()
+   └─ 輸出：Title 可信度 (CREDIBLE/MISLEADING/UNCERTAIN)
 ```
 
-### 在其他專案中重用
-```python
-# 其他專案可以 import 這些工具
-from qa_tool import web_search
 
-# 只使用搜尋功能
-results = web_search("Python tutorial")
+## 🔧 技術細節
+
+### LLM Prompt 設計
+
+#### 提取器 Prompt 策略
+```python
+# 強制只從文本提取，不編造資訊
+"CRITICAL: Extract ONLY from the provided text"
+"DO NOT add information from your knowledge"
+"Details must be EXACT quotes or paraphrases from the CONTENT section"
+```
+
+#### 驗證器 Prompt 策略
+```python
+# 多語言支援
+"CRITICAL: You MUST respond in Traditional Chinese (繁體中文)"
+
+# 證據分類
+"- Supported: If supporting evidence is strong"
+"- Contradicted: If refuting evidence is strong"
+"- Insufficient evidence: If evidence is too weak"
+```
+
+### 證據過濾機制
+
+**預過濾（Pre-filtering）**：
+```python
+# 快速過濾明顯不相關的證據（減少 LLM API 調用）
+if "台北" in claim and "San Diego" in evidence:
+    return False  # 過濾掉
+```
+
+**LLM 立場分析**：
+```python
+# 對保留的證據進行深度分析
+stance = analyze_evidence_stance(claim, evidence)
+# 返回：support / refute / irrelevant
+```
+
+### 搜尋查詢優化
+
+```python
+# 原始 claim
+"台北市跨年晚會動員警民力超過3,000人"
+
+# 經過 generate_search_query() 優化
+"台北 跨年晚會 警民力 3000"  # 去除贅字，保留關鍵詞
+
+# 自動加入地域關鍵字
+if "台北" in claim and "台北" not in query:
+    query = "台北 " + query
 ```
 
 ---
 
-## 🏗️ 架構設計
+## 🛠️ 開發指南
 
-### 模組化架構
-```
-用戶輸入
-   ↓
-qa_agent.py (主控 Agent)
-   ↓
-   ├─→ qa_tool.py (搜尋工具)
-   │      └─→ DuckDuckGo API
-   ↓
-   └─→ LLM API (gpt-oss:20b)
-   ↓
-返回答案
+### 添加新功能範例
+
+#### 1. 來源可信度排序
+
+創建 `credibility_ranker.py`：
+```python
+def rank_sources_by_credibility(evidence_list):
+    """依來源可信度排序證據"""
+    priority = {
+        ".gov": 5,    # 政府網站
+        ".edu": 4,    # 教育機構
+        "news": 3,    # 新聞網站
+        "blog": 1     # 個人部落格
+    }
+    
+    for evidence in evidence_list:
+        domain = extract_domain(evidence['href'])
+        evidence['credibility_score'] = get_score(domain, priority)
+    
+    return sorted(evidence_list, 
+                  key=lambda x: x['credibility_score'], 
+                  reverse=True)
 ```
 
-### 設計優點
-1. **模組分離**：工具和 Agent 分開，易於測試和擴展
-2. **可重用性**：`qa_tool.py` 可以被其他專案 import
-3. **易於擴展**：未來可以輕鬆添加新工具
+在 `evidence_processor.py` 中使用：
+```python
+from credibility_ranker import rank_sources_by_credibility
+
+# 在 verify_claim() 中
+categorized_evidence["support"] = rank_sources_by_credibility(
+    categorized_evidence["support"]
+)
+```
+
+#### 2. 時間相關性檢查
+
+創建 `temporal_checker.py`：
+```python
+from datetime import datetime
+
+def extract_publish_date(evidence_text):
+    """從證據中提取發布日期"""
+    # 使用正則或 LLM 提取日期
+    ...
+
+def is_temporally_relevant(claim_date, evidence_date, threshold_days=365):
+    """檢查證據是否在時間範圍內"""
+    delta = abs((claim_date - evidence_date).days)
+    return delta <= threshold_days
+```
+
+### 測試新模組
+
+```python
+# test_credibility_ranker.py
+from credibility_ranker import rank_sources_by_credibility
+
+def test_gov_domain_highest_priority():
+    evidence = [
+        {"href": "https://example.gov", "title": "Gov source"},
+        {"href": "https://blog.com", "title": "Blog source"}
+    ]
+    ranked = rank_sources_by_credibility(evidence)
+    assert ranked[0]['href'].endswith('.gov')
+```
+
+---
+
+## 📊 效能優化
+
+### 已實施的優化
+
+1. **預過濾機制**
+   - 在 LLM 分析前先快速過濾明顯不相關的證據
+   - 減少 LLM API 調用次數（降低延遲和成本）
+
+2. **搜尋查詢優化**
+   - 提取關鍵詞，移除贅字
+   - 自動加入地域關鍵字提高搜尋準確度
+
+3. **模組化載入**
+   - 只在需要時 import 模組
+   - 減少啟動時間
+
+### 未來可優化項目
+
+- [ ] **並行處理**：同時驗證多個 Details
+- [ ] **快取機制**：重複查詢直接返回快取結果
+- [ ] **批次 LLM 請求**：一次處理多個 claim
+- [ ] **漸進式回應**：先顯示部分結果，再補充完整驗證
+
+---
+
+## ⚠️ 注意事項與限制
+
+### API 使用限制
+- **速率限制**：LLM API 可能有 QPS 限制
+- **超時設定**：目前設定 120 秒，複雜驗證可能超時
+- **Token 限制**：單次請求不能超過模型的 context window
+
+### 搜尋限制
+- **DuckDuckGo 限制**：無 API Key，有速率限制
+- **搜尋品質**：依賴搜尋引擎結果品質
+- **語言限制**：中文查詢可能返回較少結果
+
+### 驗證準確度
+- **LLM 判斷**：立場分析依賴 LLM 理解能力
+- **證據品質**：搜尋結果可能包含不可靠來源
+- **時效性**：無法驗證實時事件（搜尋引擎索引延遲）
+
+### 安全性
+- **API Key 保護**：
+  - ✅ `.env` 已加入 `.gitignore`
+  - ❌ 不要在程式碼中硬編碼 API Key
+  - ❌ 不要將 `.env` 上傳到 GitHub
+
+- **輸入驗證**：
+  - Extension 只提取 DOM 內容，不執行腳本
+  - Flask 後端應加入輸入長度限制（TODO）
+
+---
+
+## 🎯 未來擴展計畫
+
+### 短期目標
+- [x] 模組化重構
+- [x] 多語言支援
+- [x] 證據立場分析
+- [ ] 來源可信度排序
+- [ ] 時間相關性檢查
+- [ ] 錯誤處理改進
+
+### 中期目標
+- [ ] 並行驗證提升速度
+- [ ] 結果快取機制
+- [ ] 用戶反饋系統（標記錯誤判斷）
+- [ ] 驗證歷史記錄
+
+### 長期目標
+- [ ] 支援更多語言（日文、韓文）
+- [ ] 圖片和影片事實查核
+- [ ] 與事實查核組織 API 整合
+- [ ] 機器學習模型輔助判斷
 
 ---
 
@@ -227,73 +471,107 @@ qa_agent.py (主控 Agent)
 
 ---
 
-## 📚 技術棧
-
-- **DuckDuckGo Search** - 網路搜尋（無需 API Key）
-- **Open WebUI** - 圖形化對話介面
-- **LLM API** - Ollama 兼容的 API 端點
-- **Python** - 主要開發語言
-
----
-
 ## ⚠️ 注意事項
 
 1. **API Key 安全**
-   - ❌ 不要將 `.env` 上傳到 GitHub
-   - ✅ 使用 `.env.example` 作為範本
+---
 
-2. **網路搜尋限制**
-   - DuckDuckGo 可能有速率限制
-   - 建議適度使用
+## 🔧 系統需求
 
-3. **Open WebUI Tool 設置**
-   - 需要手動將 `qa_tool.py` 內容貼到 Open WebUI
-   - 這是 Open WebUI 的設計限制
+- **Python**: 3.8+
+- **網路連接**: 需要連接外網進行搜尋
+- **瀏覽器**: Google Chrome 或 Chromium-based 瀏覽器
+- **LLM API Key**: 由課程提供
 
 ---
 
-## 🎯 未來擴展
+## 📞 疑難排解
 
-模組化設計讓擴展變得簡單：
+### 常見問題
 
-### 添加新工具範例
-```python
-# calculator_tool.py
-def calculate(expression: str) -> float:
-    """計算數學表達式"""
-    return eval(expression)
-
-# 在 qa_agent.py 中整合
-from qa_tool import web_search
-from calculator_tool import calculate
-
-class QAAgent:
-    def process(self, query):
-        if "計算" in query:
-            return calculate(query)
-        elif "搜尋" in query:
-            return web_search(query)
+#### Q1: Extension 無法連接後端
 ```
+錯誤訊息：Cannot connect to server
+```
+**解決方案**：
+1. 確認 `fake_news_server.py` 正在運行
+2. 檢查 Flask 是否在 `http://127.0.0.1:5000`
+3. 查看瀏覽器 Console 的錯誤訊息
 
-### 可以添加的工具
-- 📊 **數據視覺化** - matplotlib 繪圖
-- 🧮 **計算器** - 數學運算
-- 📄 **文件讀取** - RAG 系統
-- 💾 **記憶系統** - 對話歷史儲存
-- 🌐 **API 整合** - 天氣、股票等
+#### Q2: LLM API 超時
+```
+錯誤訊息：Request timeout after 120s
+```
+**解決方案**：
+1. 檢查網路連接
+2. 確認 API Key 正確
+3. 可以在 `llm_helpers.py` 中調整 timeout 參數
 
-只需要創建新的工具模組，然後在 `qa_agent.py` 中 import 即可！
+#### Q3: 搜尋結果全部被過濾
+```
+輸出：Pre-filtered 10 obviously irrelevant sources
+```
+**解決方案**：
+1. 檢查 claim 中的地點關鍵字
+2. `evidence_processor.py` 的預過濾邏輯可能太嚴格
+3. 調整 `is_evidence_potentially_relevant()` 的邏輯
+
+#### Q4: Extension 提取不到內容
+```
+輸出：Failed to extract page text
+```
+**解決方案**：
+1. 某些網站有反爬蟲機制
+2. 檢查網頁是否為動態載入（React/Vue SPA）
+3. 嘗試在 `content.js` 中調整選擇器
+
+#### Q5: 驗證結果全是「證據不足」
+```
+所有 Details 都返回：Insufficient evidence
+```
+**解決方案**：
+1. 檢查搜尋關鍵字是否合理
+2. 可能是搜尋語言不匹配（中文 claim 用英文搜）
+3. 嘗試手動搜尋看是否有相關結果
 
 ---
 
-## 📞 支援
+## 📖 參考資源
 
-如有問題，請查看：
-- [Open WebUI 文檔](https://docs.openwebui.com/)
-- [Ollama API 文檔](https://docs.ollama.com/api/)
+### 專案相關
+- [GitHub Repository](https://github.com/Lienlientina/1132_TheoryOfComputation)
+- [Chrome Extension 開發文檔](https://developer.chrome.com/docs/extensions/)
+- [Flask 官方文檔](https://flask.palletsprojects.com/)
+
+### API 相關
+- [Ollama API 文檔](https://github.com/ollama/ollama/blob/main/docs/api.md)
+- [DuckDuckGo Search API](https://pypi.org/project/duckduckgo-search/)
+
+### 事實查核參考
+- [台灣事實查核中心](https://tfc-taiwan.org.tw/)
+- [Snopes](https://www.snopes.com/) - 國際知名事實查核網站
+- [FactCheck.org](https://www.factcheck.org/)
 
 ---
 
-## 📄 授權
+## 📝 更新日誌
 
-本專案為 NCKU 計算理論課程期末專案。
+### Version 2.0 (2026-01-01) - 重構與擴展
+- ✨ 模組化重構（4個獨立模組）
+- ✨ 新增 Chrome Extension 支援
+- ✨ 三層驗證架構（Title→Details→Evidence）
+- ✨ 多語言支援（中文/英文/自動偵測）
+- ✨ 證據立場分析（support/refute/irrelevant）
+- 🐛 修復 LLM 回應 markdown 解析問題
+- 🐛 修復預過濾過於嚴格的問題
+- 📝 加強 prompt 防止 LLM 編造資訊
+
+### Version 1.0 (2025-12) - 初始版本
+- ✅ 基礎 QA Agent 功能
+- ✅ 網路搜尋整合
+- ✅ LLM API 串接
+
+---
+
+**⭐ 如果這個專案對你有幫助，請給個 Star！**
+
