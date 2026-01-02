@@ -129,8 +129,41 @@ python fake_news_server.py
 ---
 
 ## 🏗️ 系統流程圖 (DAG)
-
-![System Workflow DAG](DAG.png)
+```mermaid
+---
+config:
+  theme: mc
+  look: neo
+  layout: dagre
+---
+flowchart TB
+    A["User"] -- mode selection --> B["Mode Selector"]
+    B -- "mode=news" --> C1["News Mode UI"]
+    B -- "mode=qa" --> C2["QA Mode UI"]
+    C1 -- Analyze Current Page --> D1["Webpage Text Extraction"]
+    C1 -- Verify Text --> D2["Manual Article Input"]
+    D1 -- article text --> E["Input Payload"]
+    D2 -- article text --> E
+    C2 -- user question --> E
+    E -- mode, text, language, publishDate --> F["verify API"]
+    F -- "mode=news" --> G1["FakeNewsAgent"]
+    F -- "mode=qa" --> G2["QAAgent"]
+    G1 -- article text --> H1["Claim Extraction"]
+    H1 -- claim list --> I1{"Claim Iterator"}
+    I1 -- single claim --> J1["Web Search"]
+    J1 -- evidence snippets --> K1["Claim Verification"]
+    K1 -- verdict, explanation --> L1["Per-claim Result"]
+    L1 -- next claim --> I1
+    I1 -- all claim results --> M1["Result Aggregation"]
+    M1 -- credibility metrics --> N1["Title / Article Credibility"]
+    G2 -- question text --> H2["Search Decision"]
+    H2 -- search query --> I2["Web Search"]
+    I2 -- retrieved context --> J2["Answer Generation"]
+    H2 -- direct prompt --> J2
+    J2 -- answer text --> O["Response Payload"]
+    N1 -- structured JSON --> O
+    O -- rendered text --> P["Extension Output"]
+```
 
 ### 整體架構
 ```
